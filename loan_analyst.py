@@ -1,3 +1,5 @@
+from typing import Self
+import requests
 import numpy as np
 import numpy_financial as npf
 import pandas as pd
@@ -5,22 +7,249 @@ import datetime as dt
 from dateutil.relativedelta import relativedelta
 import matplotlib.pyplot as plt
 import os
-import seaborn as sns
-from tqdm import tqdm
 import uuid
-import sqlite3
-from scipy.optimize import brentq
-import scipy.stats as stats
-from IPython.display import display
-from tkinter import Tk, filedialog
+import psycopg2
+from scipy.optimize import brentq, differential_evolution
+
+
+
+class DbManager:
+    def __init__(self, dbname, user, password, host='localhost', port='5432'):
+        self.dbname = dbname
+        self.user = user
+        self.password = password
+        self.host = host
+        self.port = port
+
+    def connect(self):
+        return psycopg2.connect(
+            dbname=self.dbname,
+            user=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port
+        )
+
+    def execute_db_query(self, query, parameters=()):
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, parameters)
+            conn.commit()
+            return cursor
+
+    def execute_db_query(self, query, parameters=()):
+        with self.connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, parameters)
+            conn.commit()
+            return cursor
+
+    def create_db(self):
+        with self.connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''CREATE TABLE IF NOT EXISTS loans(
+                    loan_id UUID PRIMARY KEY,
+                    initial_rate DECIMAL(5,2) NOT NULL,
+                    initial_term INTEGER NOT NULL,
+                    loan_amount DECIMAL(15,2) NOT NULL,
+                    amortization_type VARCHAR(20) NOT NULL CHECK (amortization_type IN ('French', 'Italian')),
+                    frequency VARCHAR(20) NOT NULL CHECK (frequency IN ('monthly', 'quarterly', 'semi-annual', 'annual')),
+                    rate_type VARCHAR(10) NOT NULL CHECK (rate_type IN ('fixed', 'variable')),
+                    use_euribor BOOLEAN DEFAULT FALSE,
+                    update_frequency VARCHAR(20) CHECK (update_frequency IN ('monthly', 'quarterly', 'semi-annual', 'annual')),
+                    downpayment_percent DECIMAL(5,2) DEFAULT 0,
+                    start_date DATE NOT NULL,
+                    active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+                ''');
+
+                cursor.execute('''CREATE TABLE IF NOT EXISTS additional_costs(
+                    loan_id UUID REFERENCES loans(loan_id),
+                    description VARCHAR(255) NOT NULL,
+                    amount DECIMAL(15,2) NOT NULL,
+                    PRIMARY KEY (loan_id, description)
+                )
+                ''');
+
+                cursor.execute('''CREATE TABLE IF NOT EXISTS periodic_expenses(
+                    loan_id UUID REFERENCES loans(loan_id),
+                    description VARCHAR(255) NOT NULL,
+                    amount DECIMAL(15,2) NOT NULL,
+                    PRIMARY KEY (loan_id, description)
+                )
+                ''');
+
+                cursor.execute(''' CREATE TABLE IF NOT EXISTS amortization_schedule(
+                    payment_id UUID PRIMARY KEY,
+                    loan_id UUID REFERENCES loans(loan_id),
+                    payment_date DATE NOT NULL,
+                    amount DECIMAL(15,2) NOT NULL,
+                    interest DECIMAL(15,2) NOT NULL,
+                    principal DECIMAL(15,2) NOT NULL,
+                    balance DECIMAL(15,2) NOT NULL
+                )
+                ''')
+
+                 # Creazione degli indici
+                cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_amortization_loan_id ON amortization_schedule(loan_id);
+                CREATE INDEX IF NOT EXISTS idx_additional_costs_loan_id ON additional_costs(loan_id);
+                CREATE INDEX IF NOT EXISTS idx_periodic_expenses_loan_id ON periodic_expenses(loan_id);
+                ''');
+
+    def save_loan(self, loan):
+        with self.connect() as conn:
+            try:
+                cursor = conn.cursor()
+                
+                # Convert numpy values to Python native types
+                initial_rate = float(loan.initial_rate)
+                initial_term = int(loan.initial_term)
+                loan_amount = float(loan.loan_amount)
+                downpayment_percent = float(loan.downpayment_percent)
+                
+                # Check if loan exists
+                check_query = "SELECT COUNT(*) FROM loans WHERE loan_id = %s"
+                cursor.execute(check_query, (loan.loan_id,))
+                exists = cursor.fetchone()[0] > 0
+                
+                if exists:
+                    update_query = '''
+                    UPDATE loans SET 
+                        initial_rate = %s, initial_term = %s, loan_amount = %s, 
+                        amortization_type = %s, frequency = %s, rate_type = %s,
+                        use_euribor = %s, update_frequency = %s, downpayment_percent = %s,
+                        start_date = %s, active = %s
+                    WHERE loan_id = %s
+                    '''
+                    cursor.execute(update_query, (
+                        initial_rate, initial_term, loan_amount,
+                        loan.amortization_type, loan.frequency, loan.rate_type,
+                        loan.use_euribor, loan.update_frequency, downpayment_percent,
+                        loan.start.date(), loan.active, loan.loan_id
+                    ))
+                else:
+                    insert_query = '''
+                    INSERT INTO loans (
+                        loan_id, initial_rate, initial_term, loan_amount, 
+                        amortization_type, frequency, rate_type, use_euribor,
+                        update_frequency, downpayment_percent, start_date, active
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    '''
+                    cursor.execute(insert_query, (
+                        loan.loan_id, initial_rate, initial_term, loan_amount,
+                        loan.amortization_type, loan.frequency, loan.rate_type,
+                        loan.use_euribor, loan.update_frequency, downpayment_percent,
+                        loan.start.date(), loan.active
+                    ))
+
+                # Save additional costs
+                cursor.execute("DELETE FROM additional_costs WHERE loan_id = %s", (loan.loan_id,))
+                for desc, amount in loan.additional_costs.items():
+                    cursor.execute("""
+                        INSERT INTO additional_costs (loan_id, description, amount)
+                        VALUES (%s, %s, %s)
+                    """, (loan.loan_id, desc, float(amount)))
+
+                # Save periodic expenses
+                cursor.execute("DELETE FROM periodic_expenses WHERE loan_id = %s", (loan.loan_id,))
+                for desc, amount in loan.periodic_expenses.items():
+                    cursor.execute("""
+                        INSERT INTO periodic_expenses (loan_id, description, amount)
+                        VALUES (%s, %s, %s)
+                    """, (loan.loan_id, desc, float(amount)))
+
+                # Save amortization table
+                cursor.execute("DELETE FROM amortization_schedule WHERE loan_id = %s", (loan.loan_id,))
+                for index, row in loan.table.iterrows():
+                    cursor.execute("""
+                        INSERT INTO amortization_schedule (
+                            payment_id, loan_id, payment_date, 
+                            amount, interest, principal, balance
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        str(uuid.uuid4()), loan.loan_id, index.date(),
+                        float(row['Payment']), float(row['Interest']), 
+                        float(row['Principal']), float(row['Balance'])
+                    ))
+
+                conn.commit()
+                return True
+
+            except Exception as e:
+                conn.rollback()
+                print(f"Error saving loan: {str(e)}")
+                raise
+            
+
+    def delete_loan(self, loan_id):
+        query = 'DELETE FROM loans WHERE loan_id = %s'
+        self.execute_db_query(query, (loan_id,))
+
+    def update_loan(self, loan):
+        query = '''
+        UPDATE loans SET
+            initial_rate = %s, initial_term = %s, loan_amount = %s, amortization_type = %s, 
+            frequency = %s, rate_type = %s, use_euribor = %s, update_frequency = %s, 
+            downpayment_percent = %s, start_date = %s, active = %s
+        WHERE loan_id = %s
+        '''
+        parameters = (
+            loan.initial_rate, loan.initial_term, loan.loan_amount, loan.amortization_type, 
+            loan.frequency, loan.rate_type, loan.use_euribor, loan.update_frequency, 
+            loan.downpayment_percent, loan.start.date(), loan.active, loan.loan_id
+        )
+        self.execute_db_query(query, parameters)
+
+
+    def check_connection(self):
+        """Verifica che la connessione al database sia attiva"""
+        try:
+            with self.connect() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    return True
+        except Exception as e:
+            print(f"Database connection error: {str(e)}")
+            return False
+
+    def load_all_loans_from_db(self):
+        """Load all loans from database"""
+        try:
+            query = """
+            SELECT loan_id, initial_rate, initial_term, loan_amount, 
+                amortization_type, frequency, rate_type, use_euribor,
+                update_frequency, downpayment_percent, start_date, active
+            FROM loans 
+            WHERE active = true
+            ORDER BY start_date DESC
+            """
+            cursor = self.execute_db_query(query)
+            return cursor.fetchall()
+        except Exception as e:
+            print(f"Database error: {str(e)}")
+            return []
+        
+    def load_additional_costs(self, loan_id):
+        """Load additional costs for a loan"""
+        query = "SELECT description, amount FROM additional_costs WHERE loan_id = %s"
+        cursor = self.execute_db_query(query, (loan_id,))
+        return {row[0]: row[1] for row in cursor.fetchall()}
+
+    def load_periodic_expenses(self, loan_id):
+        """Load periodic expenses for a loan"""
+        query = "SELECT description, amount FROM periodic_expenses WHERE loan_id = %s"
+        cursor = self.execute_db_query(query, (loan_id,))
+        return {row[0]: row[1] for row in cursor.fetchall()}
+
 
 class Loan:
     loans = []
-    db_directory = os.getcwd()  # Default to the current working directory
-    
-    def __init__(self, rate, term, loan_amount, amortization_type, frequency, downpayment_percent=0, additional_costs=None, periodic_expenses=None, start=dt.date.today().isoformat(), loan_id=None):
+
+    def __init__(self, db_manager, rate, term, loan_amount, amortization_type, frequency, rate_type='fixed', use_euribor=False, update_frequency='monthly', downpayment_percent=0, additional_costs=None, periodic_expenses=None, start=dt.date.today().isoformat(), loan_id=None, should_save=True):
         self.loan_id = loan_id or str(uuid.uuid4())
-        self.initial_rate = rate 
+        self.initial_rate = rate
         self.initial_term = term
         self.loan_amount = loan_amount
         self.downpayment_percent = downpayment_percent
@@ -28,7 +257,11 @@ class Loan:
         self.loan_amount -= self.downpayment
         self.start = dt.datetime.fromisoformat(start).replace(day=1)
         self.frequency = frequency
+        self.rate_type = rate_type
+        self.use_euribor = use_euribor
+        self.update_frequency = update_frequency
         self.periods = self.calculate_periods()
+        self.euribor_rates = self.get_euribor_rates_api() if self.use_euribor else {}
         self.rate = self.calculate_rate()
         self.pmt = abs(npf.pmt(self.rate, self.periods, self.loan_amount))
         self.pmt_str = f"€ {self.pmt:,.2f}"
@@ -38,7 +271,82 @@ class Loan:
         self.taeg = {}
         self.table = self.loan_table()
         self.active = False
-        Loan.loans.append(self)
+        self.db_manager = db_manager  # Asso
+
+        # Add to loans list
+        if self not in Loan.loans:
+            Loan.loans.append(self)
+            
+        # Save to database only if should_save is True
+        if should_save:
+            self.save_to_db()
+
+            # Salva automaticamente nel database
+            self.save_to_db()
+
+    def save_to_db(self):
+        """Save loan to database"""
+        if not self.db_manager:
+            raise Exception("No database manager configured")
+            
+        try:
+            # Ensure all numpy values are converted to Python native types
+            self.initial_rate = float(self.initial_rate)
+            self.initial_term = int(self.initial_term)
+            self.loan_amount = float(self.loan_amount)
+            self.downpayment_percent = float(self.downpayment_percent)
+            
+            self.db_manager.save_loan(self)
+            return True
+        except Exception as e:
+            print(f"Error saving loan to database: {str(e)}")
+            raise
+
+    def delete_from_db(self):
+        """Elimina il prestito dal database."""
+        if self.db_manager:
+            self.db_manager.delete_loan(self.loan_id)
+            Loan.loans.remove(self)
+        else:
+            print("Errore: Nessun database manager associato a Loan!")
+
+    def update_db(self):
+        """Aggiorna i dati del prestito nel database."""
+        if self.db_manager:
+            self.db_manager.update_loan(self)
+        else:
+            print("Errore: Nessun database manager associato a Loan!")
+
+
+    def get_euribor_rates_api(self):
+        """Ottiene i tassi Euribor utilizzando l'API della BCE."""
+        base_url = "https://sdw-wsrest.ecb.europa.eu/service/data/FM/"
+        euribor_codes = {
+            '1m': "FM.B.U2.EUR.RT.MM.EURIBOR1MD.IR.M",
+            '3m': "FM.B.U2.EUR.RT.MM.EURIBOR3MD.IR.M",
+            '6m': "FM.B.U2.EUR.RT.MM.EURIBOR6MD.IR.M",
+            '12m': "FM.B.U2.EUR.RT.MM.EURIBOR1YD.IR.M"
+        }
+        rates = {}
+
+        for key, code in euribor_codes.items():
+            try:
+                url = f"{base_url}{code}?format=jsondata"
+                response = requests.get(url)
+                if response.status_code == 200:
+                    data = response.json()
+                    observations = data["dataSets"][0]["series"]["0:0:0:0"]["observations"]
+                    latest_date = max(observations.keys())
+                    latest_rate = float(observations[latest_date][0])
+                    rates[key] = latest_rate / 100  # Convertire in formato decimale
+                    print(f"Tasso Euribor {key}: {latest_rate}% (aggiornato al {latest_date})")
+                else:
+                    print(f"Errore nella richiesta per {key}: {response.status_code}")
+            except Exception as e:
+                print(f"Errore durante il recupero del tasso Euribor {key}: {e}")
+                rates[key] = self.initial_rate / 12  # Fallback in caso di errore
+
+        return rates
 
     def calculate_periods(self):
         if self.frequency == 'monthly':
@@ -53,16 +361,35 @@ class Loan:
             raise ValueError("Unsupported frequency")
 
     def calculate_rate(self):
-        if self.frequency == 'monthly':
-            return self.initial_rate / 12
-        elif self.frequency == 'quarterly':
-            return self.initial_rate / 4
-        elif self.frequency == 'semi-annual':
-            return self.initial_rate / 2
-        elif self.frequency == 'annual':
-            return self.initial_rate
+        if self.rate_type == 'fixed':
+            if self.frequency == 'monthly':
+                return self.initial_rate / 12
+            elif self.frequency == 'quarterly':
+                return self.initial_rate / 4
+            elif self.frequency == 'semi-annual':
+                return self.initial_rate / 2
+            elif self.frequency == 'annual':
+                return self.initial_rate
+            else:
+                raise ValueError("Unsupported frequency")
+
+        elif self.rate_type == 'variable':
+            if self.use_euribor:
+                if self.update_frequency == 'monthly':
+                    euribor_rate = self.euribor_rates.get('1m', self.initial_rate)
+                elif self.update_frequency == 'quarterly':
+                    euribor_rate = self.euribor_rates.get('3m', self.initial_rate)
+                elif self.update_frequency == 'semi-annual':
+                    euribor_rate = self.euribor_rates.get('6m', self.initial_rate)
+                elif self.update_frequency == 'annual':
+                    euribor_rate = self.euribor_rates.get('12m', self.initial_rate)
+                else:
+                    raise ValueError("Unsupported update frequency")
+                return euribor_rate / 12  # Assuming monthly updates for variable rate
+            else:
+                return self.initial_rate / 12
         else:
-            raise ValueError("Unsupported frequency")
+            raise ValueError("Unsupported rate type")
 
     def loan_table(self):
         if self.frequency == 'monthly':
@@ -109,6 +436,17 @@ class Loan:
             raise ValueError("Unsupported amortization type")
 
         return table.round(2)
+
+    def update_variable_rate(self):
+        """Aggiorna il tasso variabile in base al tasso Euribor più recente."""
+        if self.rate_type == 'variable' and self.use_euribor:
+            self.euribor_rates = self.get_euribor_rates_api()
+            self.rate = self.calculate_rate()
+            self.pmt = abs(npf.pmt(self.rate, self.periods, self.loan_amount))
+            self.pmt_str = f"€ {self.pmt:,.2f}"
+            self.table = self.loan_table()
+        else:
+            raise ValueError("Cannot update rate for fixed rate loans or non-EURIBOR variable rate loans")
 
     def plot_balances(self):
         amort = self.loan_table()
@@ -210,7 +548,7 @@ class Loan:
         self.pmt = abs(npf.pmt(self.rate, self.periods, self.loan_amount))
         self.pmt_str = f"€ {self.pmt:,.2f}"
         self.table = self.loan_table()
-        self.update_in_db()
+        self.update_db()
 
     def calculate_taeg(self):
         """
@@ -246,7 +584,7 @@ class Loan:
             raise ValueError("Unsupported frequency")
 
         # Funzione da azzerare per calcolare il TAEG periodico
-        def taeg_func(r):
+        def taeg_func(r): 
             return sum([gross_payment / (1 + r)**t for t in periods_in_years]) - net_loan_amount
 
         # Trova la radice dell'equazione per ottenere il TAEG periodico
@@ -271,120 +609,6 @@ class Loan:
         
         return f'TAEG Periodico: {period_taeg_percent:.4f}%, TAEG Annualizzato: {annualized_taeg_percent:.4f}%'
 
-    def update_table_structure(self, table_name='loan_table'):
-        db_path = os.path.join(Loan.db_directory, 'loans.db')
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-
-            # Creare la tabella se non esiste
-            cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    Date TEXT,
-                    'Initial Debt' REAL,
-                    Payment REAL,
-                    Interest REAL,
-                    Principal REAL,
-                    Balance REAL,
-                    loan_id TEXT
-                )
-            """)
-
-            # Creare una nuova tabella temporanea con la colonna "Initial Debt"
-            cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name}_temp (
-                    Date TEXT,
-                    'Initial Debt' REAL,
-                    Payment REAL,
-                    Interest REAL,
-                    Principal REAL,
-                    Balance REAL,
-                    loan_id TEXT
-                )
-            """)
-
-            # Copia i dati dalla vecchia tabella alla nuova
-            cursor.execute(f"""
-                INSERT INTO {table_name}_temp (Date, Payment, Interest, Principal, Balance, loan_id)
-                SELECT Date, Payment, Interest, Principal, Balance, loan_id
-                FROM {table_name}
-            """)
-
-            # Eliminare la vecchia tabella
-            cursor.execute(f"DROP TABLE {table_name}")
-
-            # Rinomina la tabella temporanea a quella originale
-            cursor.execute(f"ALTER TABLE {table_name}_temp RENAME TO {table_name}")
-
-            conn.commit()
-
-        print(f"Table {table_name} structure updated successfully.")
-
-    def save_to_db(self, table_name='loan_table'):
-        # Verifica se la tabella esiste e, in caso contrario, crea la tabella
-        self.update_table_structure(table_name)
-        
-        db_path = os.path.join(Loan.db_directory, 'loans.db')
-        with sqlite3.connect(db_path) as conn:
-            self.table['loan_id'] = self.loan_id
-            self.table.to_sql(table_name, conn, if_exists='append', index_label='Date')
-        print(f"Loan table saved to {db_path} in table {table_name}")
-
-    def update_in_db(self, table_name='loan_table'):
-        """
-        Aggiorna i dati del prestito nel database, sostituendo la vecchia versione.
-        Crea la tabella se non esiste.
-        """
-        db_path = os.path.join(Loan.db_directory, 'loans.db')
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            
-            # Crea la tabella se non esiste
-            cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    Date TEXT,
-                    'Initial Debt' REAL,
-                    Payment REAL,
-                    Interest REAL,
-                    Principal REAL,
-                    Balance REAL,
-                    loan_id TEXT
-                )
-            """)
-
-            try:
-                # Elimina i record esistenti per questo prestito
-                cursor.execute(f"DELETE FROM {table_name} WHERE loan_id = ?", (self.loan_id,))
-                # Aggiungi i nuovi dati del prestito
-                self.table['loan_id'] = self.loan_id
-                self.table.to_sql(table_name, conn, if_exists='append', index_label='Date')
-                print(f"Loan table updated in {db_path} in table {table_name}")
-            except sqlite3.OperationalError as e:
-                print(f"An error occurred: {e}")
-                raise
-
-    @classmethod
-    def get_loan_by_id(cls, loan_id, table_name='loan_table'):
-        db_path = os.path.join(Loan.db_directory, 'loans.db')
-        with sqlite3.connect(db_path) as conn:
-            query = f"SELECT * FROM {table_name} WHERE loan_id = ?"
-            loan_data = pd.read_sql(query, conn, params=(loan_id,))
-        if loan_data.empty:
-            print("No loan found with the given ID.")
-            return None
-        loan_details = loan_data.iloc[0]
-        loan = Loan(
-            rate=loan_details['Rate'],
-            term=loan_details['Term'],
-            loan_amount=loan_details['LoanAmount'],
-            amortization_type=loan_details['AmortizationType'],
-            frequency=loan_details['Frequency'],
-            start=loan_details['Start'],
-            loan_id=loan_id
-        )
-        loan.table = loan_data.set_index('Date')
-        loan.table.index = pd.to_datetime(loan.table.index)
-        Loan.loans.append(loan)
-        return loan
 
     @classmethod
     def compare_loans(cls, loans):
@@ -443,19 +667,6 @@ class Loan:
         for idx, loan in enumerate(cls.loans):
             print(f"{idx + 1}: Loan ID: {loan.loan_id}, Amount: €{loan.loan_amount:,.2f}, Rate: {loan.initial_rate * 100:.2f}%, Term: {loan.initial_term} years")
 
-    @classmethod
-    def delete_loan(cls, loan_idx, table_name='loan_table'):
-        """
-        Delete a loan based on its index in the list.
-        """
-        try:
-            loan = cls.loans.pop(loan_idx)
-            db_path = os.path.join(Loan.db_directory, 'loans.db')
-            with sqlite3.connect(db_path) as conn:
-                conn.execute(f"DELETE FROM {table_name} WHERE loan_id = ?", (loan.loan_id,))
-            print(f"Loan with ID {loan.loan_id} has been deleted.")
-        except IndexError:
-            print("Invalid loan index.")
 
     @classmethod
     def delete_loan_with_confirmation(cls):
@@ -577,3 +788,55 @@ class Loan:
         consolidated_loan.save_to_db(table_name="consolidated_loans")
 
         return consolidated_loan
+    
+
+    @classmethod
+    def clear_loans(cls):
+        """Pulisce la lista dei prestiti in memoria"""
+        cls.loans.clear()
+        
+    @classmethod 
+    def load_all_loans(cls, db_manager):
+        """Carica tutti i prestiti dal database nella lista loans"""
+        cls.clear_loans()  # Pulisce la lista esistente
+        
+        try:
+            # Carica i dati dal database
+            loans_data = db_manager.load_all_loans_from_db()
+            
+            for loan_data in loans_data:
+                try:
+                    # Crea nuovo prestito
+                    loan = cls(
+                        db_manager=db_manager,
+                        rate=float(loan_data[1]),
+                        term=int(loan_data[2]),
+                        loan_amount=float(loan_data[3]),
+                        amortization_type=loan_data[4],
+                        frequency=loan_data[5],
+                        rate_type=loan_data[6],
+                        use_euribor=loan_data[7],
+                        update_frequency=loan_data[8],
+                        downpayment_percent=float(loan_data[9]),
+                        start=loan_data[10].isoformat(),
+                        loan_id=str(loan_data[0])
+                    )
+                    
+                    # Carica costi aggiuntivi
+                    loan.additional_costs = db_manager.load_additional_costs(loan.loan_id)
+                    loan.periodic_expenses = db_manager.load_periodic_expenses(loan.loan_id)
+                    
+                    # Ricalcola tabella
+                    loan.table = loan.loan_table()
+                    
+                    # Il prestito viene automaticamente aggiunto alla lista loans nell'__init__
+                    
+                except Exception as e:
+                    print(f"Error loading loan {loan_data[0]}: {str(e)}")
+                    continue
+                    
+            return True
+            
+        except Exception as e:
+            print(f"Error loading loans: {str(e)}")
+            return False
