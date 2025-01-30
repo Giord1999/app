@@ -1,31 +1,36 @@
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QLineEdit, QComboBox, QListWidget, QListWidgetItem, 
-                             QMessageBox, QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QAction, 
-                             QDoubleSpinBox, QSpinBox, QPushButton, QScrollArea, QInputDialog, QFormLayout, QTextEdit, QToolBar)
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, 
+                             QLineEdit, QComboBox, QListWidget, QMessageBox, 
+                             QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
+                             QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
+                             QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+                             QToolButton, QSizePolicy, QScrollArea, QAction, QTabWidget,QGridLayout)
 
-from PyQt5.QtGui import QIcon, QPixmap
-from PyQt5.QtCore import Qt
+
+from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont
+from PyQt5.QtCore import Qt, QSize, QThread, pyqtSignal
 import sys
 import os
 import time
-import sqlite3
+import matplotlib
+matplotlib.use('Qt5Agg')
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.figure import Figure
+import numpy as np
 import pandas as pd
-import uuid
-import matplotlib.pyplot as plt
-import seaborn as sns
-from loan_analyst import Loan
-import copy
-
-#TODO: Fare in modo che si possano eseguire più attività in contemporanea su più prestiti in contemporanea. Cioè: devo avere sia la possibilità di effettuare un'operazione per volta su un unico prestito, sia la possibilità di effettuare più di un'operazione su un unico prestito, sia la possibilità di effettuare un'operazione unica su più prestiti, sia di effettuare più operazioni su più prestiti
+import psycopg2
+from loan_analyst import Loan, DbManager
 
 
-def resource_path(relative_path):
+
+
+def resource_path(relative_path, resource_type='assets'):
+    """Ottiene il percorso assoluto delle risorse"""
     try:
-        base_path = sys._MEIPASS
+        base_path = sys._MEIPASS2
     except Exception:
         base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, 'assets', relative_path)
-
+    return os.path.join(base_path, resource_type, relative_path)
 
 class LoanCommand:
     def __init__(self, do_action, undo_action, description):
@@ -39,501 +44,705 @@ class LoanCommand:
     def undo(self):
         self.undo_action()
 
-
-class LoanComparisonDialog(QDialog):
-    def __init__(self, comparison_text, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Loan Comparison")
-        self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
-        self.setGeometry(100, 100, 600, 400)
-
-        layout = QVBoxLayout(self)
-        self.setLayout(layout)
-
-        comparison_results = QTextEdit(self)
-        comparison_results.setReadOnly(True)
-        comparison_results.setText(comparison_text)
-        layout.addWidget(comparison_results)
-
-
-class LoanApp(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("LoanManager Pro")
-        self.setGeometry(100, 100, 800, 600)
-        self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
-        self.setStyleSheet("""
+class FluentStylesheet:
+    @staticmethod
+    def get_base_stylesheet():
+        return """
+            QWidget {
+                font-size: 12pt;
+            }
+            
             QMainWindow {
+                background-color: #ffffff;
+            }
+            
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-size: 12pt;
+                min-width: 80px;
+            }
+            
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+            
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+            
+            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+                border: 1px solid #d1d1d1;
+                border-radius: 4px;
+                padding: 5px;
+                background-color: white;
+                min-height: 25px;
+            }
+            
+            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+                border-color: #0078d4;
+            }
+            
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            
+            QComboBox::down-arrow {
+                image: url(assets/dropdown_arrow.png);
+                width: 12px;
+                height: 12px;
+            }
+            
+            QListWidget {
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                background-color: white;
+                padding: 4px;
+            }
+            
+            QListWidget::item {
+                height: 28px;
+                padding: 4px;
+                border-radius: 4px;
+            }
+            
+            QListWidget::item:selected {
+                background-color: #e5f3ff;
+                color: black;
+            }
+            
+            QListWidget::item:hover {
+                background-color: #f5f5f5;
+            }
+            
+            QTableWidget {
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                background-color: white;
+                gridline-color: #f0f0f0;
+            }
+            
+            QTableWidget::item {
+                padding: 4px;
+            }
+            
+            QTableWidget::item:selected {
+                background-color: #e5f3ff;
+                color: black;
+            }
+            
+            QHeaderView::section {
+                background-color: #f8f8f8;
+                padding: 4px;
+                border: none;
+                border-right: 1px solid #e0e0e0;
+                border-bottom: 1px solid #e0e0e0;
+            }
+            
+            QScrollBar:vertical {
+                border: none;
+                background-color: #f8f8f8;
+                width: 14px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background-color: #c1c1c1;
+                min-height: 30px;
+                border-radius: 7px;
+                margin: 2px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background-color: #a8a8a8;
+            }
+        """
+
+
+class ThemeManager:
+    def __init__(self):
+        self.current_theme = "light"
+        self._themes = {
+            "light": {
+                "base": """
+                    QWidget {
+                        font-size: 12pt;
+                        background-color: #ffffff;
+                        color: #000000;
+                    }
+                """,
+                "ribbon": """
+                    QWidget#ribbon {
+                        background-color: #f8f8f8;
+                        border-bottom: 1px solid #e0e0e0;
+                    }
+                    
+                    CollapsibleRibbonGroup {
+                        background-color: #ffffff;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 4px;
+                    }
+                    
+                    /* Stile per i titoli dei gruppi */
+                    CollapsibleRibbonGroup QLabel[groupTitle="true"] {
+                        color: #616161;
+                        font-size: 16pt;  /* Aumentato per i titoli dei gruppi */
+                        font-weight: bold;
+                    }
+                    
+                    /* Stile per i bottoni */
+                    AdaptiveRibbonButton {
+                        border: none;
+                        border-radius: 3px;
+                        background-color: transparent;
+                        color: #616161;
+                        font-size: 11pt;  /* Ridotto per i bottoni */
+                        padding: 4px;
+                    }
+                    
+                    AdaptiveRibbonButton:hover {
+                        background-color: #f0f0f0;
+                    }
+                    
+                    AdaptiveRibbonButton:pressed {
+                        background-color: #e0e0e0;
+                    }
+                    
+                    /* Stile per le tab */
+                    QTabWidget::tab-bar {
+                        font-size: 11pt;  /* Ridotto per le tab */
+                    }
+                    
+                    QTabBar::tab {
+                        font-size: 11pt;  /* Ridotto per le tab */
+                        padding: 8px 16px;
+                    }
+                    
+                    /* Altri label nel ribbon */
+                    QLabel {
+                        color: #616161;
+                        font-size: 11pt;
+                    }
+                """,
+                "main_area": """
+                    QListWidget {
+                        background-color: #ffffff;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 4px;
+                        font-size: 12pt;
+                    }
+                    
+                    QListWidget::item {
+                        height: 30px;
+                        padding: 5px;
+                    }
+                    
+                    QListWidget::item:selected {
+                        background-color: #e5f3ff;
+                        color: #000000;
+                    }
+                """
+            },
+            "dark": {
+                "base": """
+                    QWidget {
+                        font-size: 12pt;
+                        background-color: #1f1f1f;
+                        color: #ffffff;
+                    }
+                """,
+                "ribbon": """
+                    QWidget#ribbon {
+                        background-color: #2d2d2d;
+                        border-bottom: 1px solid #3d3d3d;
+                    }
+                    
+                    CollapsibleRibbonGroup {
+                        background-color: #2d2d2d;
+                        border: 1px solid #3d3d3d;
+                        border-radius: 4px;
+                    }
+                    
+                    /* Stile per i titoli dei gruppi */
+                    CollapsibleRibbonGroup QLabel[groupTitle="true"] {
+                        color: #ffffff;
+                        font-size: 16pt;  /* Aumentato per i titoli dei gruppi */
+                        font-weight: bold;
+                    }
+                    
+                    /* Stile per i bottoni */
+                    AdaptiveRibbonButton {
+                        border: none;
+                        border-radius: 3px;
+                        background-color: transparent;
+                        color: #ffffff;
+                        font-size: 11pt;  /* Ridotto per i bottoni */
+                        padding: 4px;
+                    }
+                    
+                    AdaptiveRibbonButton:hover {
+                        background-color: #3d3d3d;
+                    }
+                    
+                    AdaptiveRibbonButton:pressed {
+                        background-color: #4d4d4d;
+                    }
+                    
+                    /* Stile per le tab */
+                    QTabWidget::tab-bar {
+                        font-size: 11pt;  /* Ridotto per le tab */
+                    }
+                    
+                    QTabBar::tab {
+                        font-size: 11pt;  /* Ridotto per le tab */
+                        padding: 8px 16px;
+                    }
+                    
+                    /* Altri label nel ribbon */
+                    QLabel {
+                        color: #ffffff;
+                        font-size: 11pt;
+                    }
+                """,
+                "main_area": """
+                    QListWidget {
+                        background-color: #2d2d2d;
+                        border: 1px solid #3d3d3d;
+                        border-radius: 4px;
+                        font-size: 12pt;
+                    }
+                    
+                    QListWidget::item {
+                        height: 30px;
+                        padding: 5px;
+                    }
+                    
+                    QListWidget::item:selected {
+                        background-color: #0078d4;
+                        color: #ffffff;
+                    }
+                """
+            }
+        }
+
+    def get_stylesheet(self, theme_name=None):
+        theme = theme_name or self.current_theme
+        theme_dict = self._themes[theme]
+        return "\n".join(theme_dict.values())
+
+    def toggle_theme(self):
+        self.current_theme = "dark" if self.current_theme == "light" else "light"
+        return self.get_stylesheet()
+
+    def get_current_theme(self):
+        return self.current_theme
+
+    def apply_theme_to_widget(self, widget, widget_type):
+        """Applica stili specifici per tipo di widget"""
+        theme = self._themes[self.current_theme]
+        if widget_type in theme:
+            widget.setStyleSheet(theme[widget_type])
+
+class CollapsibleRibbonGroup(QWidget):
+    def __init__(self, title, parent=None):
+        super().__init__(parent)
+        self.title = title
+        self.is_expanded = True
+        
+        # Main layout
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setSpacing(1)
+        self.main_layout.setContentsMargins(2, 2, 2, 2)
+        
+        # Header
+        self.header = QWidget()
+        self.header_layout = QHBoxLayout(self.header)
+        self.header_layout.setContentsMargins(2, 2, 2, 2)
+        
+        # Title label
+        self.title_label = QLabel(title)
+        self.title_label.setStyleSheet("""
+            QLabel {
+                color: #616161;
+                font-size: 11.5pt;
+                font-weight: bold;
+            }
+        """)
+        
+        # Toggle button
+        self.toggle_button = QToolButton()
+        self.toggle_button.setArrowType(Qt.DownArrow)
+        self.toggle_button.clicked.connect(self.toggle_content)
+        self.toggle_button.setStyleSheet("""
+            QToolButton {
+                border: none;
+                background: transparent;
+            }
+        """)
+        
+        self.header_layout.addWidget(self.title_label)
+        self.header_layout.addWidget(self.toggle_button)
+        
+        # Content container
+        self.content = QWidget()
+        self.content_layout = QHBoxLayout(self.content)
+        self.content_layout.setSpacing(4)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Add header and content to main layout
+        self.main_layout.addWidget(self.header)
+        self.main_layout.addWidget(self.content)
+        
+        # Style
+        self.setStyleSheet("""
+            CollapsibleRibbonGroup {
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+            }
+        """)
+        
+        # Size policy
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+
+    def toggle_content(self):
+        self.is_expanded = not self.is_expanded
+        self.content.setVisible(self.is_expanded)
+        self.toggle_button.setArrowType(Qt.DownArrow if self.is_expanded else Qt.RightArrow)
+        self.adjustSize()
+
+    def add_button(self, button):
+        self.content_layout.addWidget(button)
+
+class AdaptiveRibbonTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setSpacing(0)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Scroll area for horizontal scrolling
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+        """)
+        
+        # Container for groups
+        self.groups_container = QWidget()
+        self.groups_layout = QHBoxLayout(self.groups_container)
+        self.groups_layout.setSpacing(2)
+        self.groups_layout.setContentsMargins(2, 2, 2, 2)
+        
+        self.scroll_area.setWidget(self.groups_container)
+        self.layout.addWidget(self.scroll_area)
+
+    def add_group(self, group):
+        self.groups_layout.addWidget(group)
+
+class AdaptiveRibbonButton(QToolButton):
+    def __init__(self, text, icon_path=None, parent=None):
+        super().__init__(parent)
+        self.setText(text)
+        if icon_path:
+            self.setIcon(QIcon(icon_path))
+        
+        self.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        self.setIconSize(QSize(24, 24))
+        
+        # Make the button adapt to available space
+        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        self.setMinimumWidth(48)
+        self.setMaximumHeight(60)
+        
+        self.setStyleSheet("""
+            QToolButton {
+                border: none;
+                border-radius: 3px;
+                background-color: transparent;
+                color: #616161;
+                font-size: 10px;
+                padding: 2px;
+            }
+            QToolButton:hover {
                 background-color: #f0f0f0;
             }
-            QLabel {
-                font: 10pt "Segoe UI";
-            }
-            QLineEdit, QComboBox {
-                font: 10pt "Segoe UI";
-                padding: 5px;
-                border: 1px solid #c0c0c0;
-                border-radius: 4px;
-            }
-            QPushButton {
-                font: 10pt "Segoe UI";
-                background-color: #dcdcdc;
-                border: 1px solid #a9a9a9;
-                border-radius: 4px;
-                padding: 5px 10px;
-            }
-            QPushButton:hover {
-                background-color: #c8c8c8;
-            }
-            QListWidget {
-                font: 10pt "Segoe UI";
-                padding: 5px;
-                border: 1px solid #c0c0c0;
-                border-radius: 4px;
-                background-color: #ffffff;
+            QToolButton:pressed {
+                background-color: #e0e0e0;
             }
         """)
 
-        self.loans = []
-        self.selected_loan = None
-        self.undo_stack = []
-        self.redo_stack = []
-
-        self.initUI()
-
-    def initUI(self):
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-
-        layout = QVBoxLayout(central_widget)
-
-        self.loan_listbox = QListWidget()
-        self.loan_listbox.itemSelectionChanged.connect(self.select_loan)
-        layout.addWidget(self.loan_listbox)
-
-        self.initMenu()
-        self.initToolbar()
-
-    def initMenu(self):
-        menubar = self.menuBar()
-
-        # File menu
-        file_menu = menubar.addMenu('File')
-        new_loan_action = QAction('New Loan', self)
-        new_loan_action.triggered.connect(self.new_loan)
-        file_menu.addAction(new_loan_action)
-
-        delete_loan_action = QAction('Delete Loan', self)
-        delete_loan_action.triggered.connect(self.delete_loan)
-        file_menu.addAction(delete_loan_action)
-
-        save_to_db_action = QAction('Save to Database', self)
-        save_to_db_action.triggered.connect(self.save_to_database)
-        file_menu.addAction(save_to_db_action)
-
-        exit_action = QAction('Exit', self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-
-        # Loan menu
-        loan_menu = menubar.addMenu('Loan')
-        edit_loan_action = QAction('Edit Loan', self)
-        edit_loan_action.triggered.connect(self.edit_loan)
-        loan_menu.addAction(edit_loan_action)
-
-        show_payment_action = QAction('Show Payment', self)
-        show_payment_action.triggered.connect(self.pmt)
-        loan_menu.addAction(show_payment_action)
-
-        show_amortization_action = QAction('Show Amortization Table', self)
-        show_amortization_action.triggered.connect(self.amort)
-        loan_menu.addAction(show_amortization_action)
-
-        show_summary_action = QAction('Show Loan Summary', self)
-        show_summary_action.triggered.connect(self.summary)
-        loan_menu.addAction(show_summary_action)
-
-        plot_balances_action = QAction('Plot Balances', self)
-        plot_balances_action.triggered.connect(self.plot)
-        loan_menu.addAction(plot_balances_action)
-        
-        # Tools menu
-        tools_menu = menubar.addMenu('Tools')
-
-        set_payment_size_action = QAction('Set Payment Size for Specific Time', self)
-        set_payment_size_action.triggered.connect(self.pay_faster)
-        tools_menu.addAction(set_payment_size_action)
-
-        show_effect_action = QAction('Show Effect of Extra Payment', self)
-        show_effect_action.triggered.connect(self.pay_early)
-        tools_menu.addAction(show_effect_action)
-
-        compare_loans_action = QAction('Compare Loans', self)
-        compare_loans_action.triggered.connect(self.compare_loans)
-        tools_menu.addAction(compare_loans_action)
-
-        search_loan_action = QAction('Search Loan by ID', self)
-        search_loan_action.triggered.connect(self.search_loan_by_id)
-        tools_menu.addAction(search_loan_action)
-
-        consolidate_loans_action = QAction('Consolidate Loans', self)
-        consolidate_loans_action.triggered.connect(self.consolidate_loans)
-        tools_menu.addAction(consolidate_loans_action)
-
-        calculate_taeg_action = QAction('TAEG Calculations', self)
-        calculate_taeg_action.triggered.connect(self.open_taeg_dialog)
-        tools_menu.addAction(calculate_taeg_action)
-
-    def initToolbar(self):
-        toolbar = QToolBar("Main Toolbar")
-        self.addToolBar(toolbar)
-
-        # Add Undo button
-        undo_icon = QIcon(resource_path('undo_icon.png'))
-        undo_action = QAction(undo_icon, "Undo", self)
-        undo_action.triggered.connect(self.undo)
-        toolbar.addAction(undo_action)
-
-        # Add Redo button
-        redo_icon = QIcon(resource_path('redo_icon.png'))
-        redo_action = QAction(redo_icon, "Redo", self)
-        redo_action.triggered.connect(self.redo)
-        toolbar.addAction(redo_action)
-
-    def new_loan(self):
-        dialog = LoanDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            loan_data = dialog.get_loan_data()
-            try:
-                loan = Loan(**loan_data)
-                self.loans.append(loan)
-                self.loan_listbox.addItem(f"Loan {len(self.loans)} - {loan.loan_id} - {loan.amortization_type} amortization, {loan.frequency} payments")
-
-                # Comando per aggiungere il prestito
-                def do_action():
-                    self.loans.append(loan)
-                    self.update_loan_listbox()
-
-                # Comando per annullare l'aggiunta del prestito
-                def undo_action():
-                    self.loans.remove(loan)
-                    self.update_loan_listbox()
-
-                # Aggiungi il comando allo stack
-                self.undo_stack.append(LoanCommand(do_action, undo_action, "Add Loan"))
-                self.redo_stack.clear()  # Resetta lo stack di redo
-
-                QMessageBox.information(self, "LoanManager Pro", "Loan initialized successfully.")
-            except ValueError:
-                QMessageBox.warning(self, "LoanManager Pro", "Please enter valid inputs")
-
-    def select_loan(self):
-        selected_items = self.loan_listbox.selectedItems()
-        if selected_items:
-            selected_text = selected_items[0].text()
-            loan_index = int(selected_text.split()[1]) - 1
-            self.selected_loan = self.loans[loan_index]
-        else:
-            self.selected_loan = None
-
-    def edit_loan(self):
-        if self.selected_loan:
-            old_loan_data = copy.deepcopy(self.selected_loan.__dict__)
-            dialog = EditLoanDialog(self.selected_loan, self)
-            if dialog.exec_() == QDialog.Accepted:
-                new_loan_data = dialog.get_updated_loan_data()
-                try:
-                    self.selected_loan.edit_loan(
-                        new_rate=new_loan_data["rate"],
-                        new_term=new_loan_data["term"],
-                        new_loan_amount=new_loan_data["loan_amount"],
-                        new_downpayment_percent=new_loan_data["downpayment_percent"],
-                        new_amortization_type=new_loan_data["amortization_type"],
-                        new_frequency=new_loan_data["frequency"]
-                    )
-
-                    # Comando per modificare il prestito
-                    def do_action():
-                        self.selected_loan.edit_loan(**new_loan_data)
-                        self.update_loan_listbox()
-
-                    # Comando per annullare la modifica del prestito
-                    def undo_action():
-                        self.selected_loan.__dict__.update(old_loan_data)
-                        self.update_loan_listbox()
-
-                    # Aggiungi il comando allo stack
-                    self.undo_stack.append(LoanCommand(do_action, undo_action, "Edit Loan"))
-                    self.redo_stack.clear()
-
-                    QMessageBox.information(self, "LoanManager Pro", "Loan parameters updated.")
-                except ValueError:
-                    QMessageBox.warning(self, "LoanManager Pro", "Please enter valid inputs")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def delete_loan(self):
-        if self.selected_loan:
-            loan_to_delete = self.selected_loan
-            self.loans.remove(loan_to_delete)
-            self.update_loan_listbox()
-
-            # Comando per eliminare il prestito
-            def do_action():
-                self.loans.remove(loan_to_delete)
-                self.update_loan_listbox()
-
-            # Comando per annullare l'eliminazione del prestito
-            def undo_action():
-                self.loans.append(loan_to_delete)
-                self.update_loan_listbox()
-
-            # Aggiungi il comando allo stack
-            self.undo_stack.append(LoanCommand(do_action, undo_action, "Delete Loan"))
-            self.redo_stack.clear()
-
-            QMessageBox.information(self, "LoanManager Pro", "Loan deleted successfully.")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def pmt(self):
-        if self.selected_loan:
-            if self.selected_loan.amortization_type == "French":
-                QMessageBox.information(self, "LoanManager Pro", f"The French payment is {self.selected_loan.pmt_str}")
-            elif self.selected_loan.amortization_type == "Italian":
-                italian_payment = self.selected_loan.table['Payment'].iloc[0]
-                QMessageBox.information(self, "LoanManager Pro", f"The Italian payment is €{italian_payment:,.2f}")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def amort(self):
-        if self.selected_loan:
-            table_data = self.selected_loan.table
-
-            if "Initial Debt" in table_data.columns:
-                dialog = AmortizationDialog(table_data)
-                dialog.exec_()
-            else:
-                QMessageBox.warning(self, "LoanManager Pro", "La colonna 'Initial Debt' non è presente nella tabella.")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def summary(self):
-        if self.selected_loan:
-            additional_costs_summary = "\n".join([f"{name}: €{amount:,.2f}" for name, amount in self.selected_loan.additional_costs.items()])
-            summary_text = f"""
-            Payment: {self.selected_loan.pmt_str}
-            Payoff Date: {self.selected_loan.table.index.date[-1]}
-            Interest Paid: €{self.selected_loan.table["Interest"].cumsum()[-1]:,.2f}
-            Downpayment: €{self.selected_loan.downpayment:,.2f} ({self.selected_loan.downpayment_percent}%)
-            Additional Costs:
-            {additional_costs_summary}
-            """
-            QMessageBox.information(self, "LoanManager Pro", summary_text)
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def plot(self):
-        if self.selected_loan:
-            self.selected_loan.plot_balances()
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def pay_early(self):
-        if self.selected_loan:
-            amt, ok = QInputDialog.getDouble(self, "Input", "Enter extra payment:")
-            if ok:
-                try:
-                    result = self.selected_loan.pay_early(amt)
-                    QMessageBox.information(self, "LoanManager Pro", result)
-                except ValueError:
-                    QMessageBox.warning(self, "LoanManager Pro", "Please enter a valid amount")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def pay_faster(self):
-        if self.selected_loan:
-            years_to_pay, ok = QInputDialog.getInt(self, "Input", "Enter years to debt free:")
-            if ok:
-                try:
-                    result = self.selected_loan.pay_faster(years_to_pay)
-                    QMessageBox.information(self, "LoanManager Pro", result)
-                except ValueError:
-                    QMessageBox.warning(self, "LoanManager Pro", "Please enter a valid number of years")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def compare_loans(self):
-        if len(self.loans) < 2:
-            QMessageBox.warning(self, "LoanManager Pro", "Please set at least two loans for comparison.")
-            return
-
-        comparison_text = Loan.compare_loans(self.loans)
-        if comparison_text:
-            dialog = LoanComparisonDialog(comparison_text, self)
-            dialog.exec_()
-
-    def consolidate_loans(self):
-        if len(self.loans) < 2:
-            QMessageBox.warning(self, "LoanManager Pro", "Please set at least two loans for consolidation.")
-            return
-
-        dialog = ConsolidateLoansDialog(self.loans, self)
-        if dialog.exec_() == QDialog.Accepted:
-            self.loans.append(dialog.selected_loans[-1])
-            self.update_loan_listbox()
-            QMessageBox.information(self, "LoanManager Pro", "Loans consolidated successfully.")
-
-    def delete_loan(self):
-        if self.selected_loan:
-            loan_to_delete = self.selected_loan
-            self.loans.remove(loan_to_delete)
-            self.update_loan_listbox()
-
-            # Comando per eliminare il prestito
-            def do_action():
-                self.loans.remove(loan_to_delete)
-                self.update_loan_listbox()
-
-            # Comando per annullare l'eliminazione del prestito
-            def undo_action():
-                self.loans.append(loan_to_delete)
-                self.update_loan_listbox()
-
-            # Aggiungi il comando allo stack
-            self.undo_stack.append(LoanCommand(do_action, undo_action, "Delete Loan"))
-            self.redo_stack.clear()
-
-            QMessageBox.information(self, "LoanManager Pro", "Loan deleted successfully.")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def save_to_database(self):
-        if self.selected_loan:
-            self.selected_loan.save_to_db()
-            QMessageBox.information(self, "LoanManager Pro", "Loan saved to database.")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def search_loan_by_id(self):
-        loan_id, ok = QInputDialog.getText(self, 'Search Loan', 'Enter loan ID:')
-        if ok and loan_id:
-            loan = Loan.get_loan_by_id(loan_id)
-            if loan:
-                self.loans.append(loan)
-                self.update_loan_listbox()
-                QMessageBox.information(self, "LoanManager Pro", f"Loan with ID {loan_id} has been loaded.")
-            else:
-                QMessageBox.warning(self, "LoanManager Pro", "No loan found with the given ID.")
-
-    def update_loan_listbox(self):
-        self.loan_listbox.clear()
-        for i, loan in enumerate(self.loans):
-            self.loan_listbox.addItem(f"Loan {i + 1} - {loan.loan_id} - {loan.amortization_type} amortization, {loan.frequency} payments")
-
-    def open_taeg_dialog(self):
-        if self.selected_loan:
-            dialog = TAEGCalculationDialog(self.selected_loan, self)
-            dialog.exec_()
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan selected")
-
-    def undo(self):
-        if self.undo_stack:
-            command = self.undo_stack.pop()
-            command.undo()
-            self.redo_stack.append(command)
-            QMessageBox.information(self, "LoanManager Pro", f"Undo: {command.description}")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No more actions to undo")
-
-    def redo(self):
-        if self.redo_stack:
-            command = self.redo_stack.pop()
-            command.execute()
-            self.undo_stack.append(command)
-            QMessageBox.information(self, "LoanManager Pro", f"Redo: {command.description}")
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No more actions to redo")
-
-
-class AmortizationDialog(QDialog):
-    def __init__(self, table_data, title="Amortization Table"):
-        super().__init__()
-        self.setWindowTitle(title)
-        self.setGeometry(100, 100, 800, 600)
-        self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
-
-        layout = QVBoxLayout()
-        self.setLayout(layout)
-
-        table_widget = QTableWidget()
-        table_widget.setRowCount(len(table_data))
-        table_widget.setColumnCount(len(table_data.columns))
-        table_widget.setHorizontalHeaderLabels(table_data.columns)
-
-        for row in range(len(table_data)):
-            for col in range(len(table_data.columns)):
-                item = QTableWidgetItem(str(table_data.iat[row, col]))
-                table_widget.setItem(row, col, item)
-
-        layout.addWidget(table_widget)
-
-
-class LoanDialog(QDialog):
+class FluentRibbonTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New Loan")
-        self.setGeometry(100, 100, 400, 350)
+        self.layout = QVBoxLayout(self)
+        self.layout.setSpacing(0)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.groups_container = QWidget()
+        self.groups_layout = QHBoxLayout(self.groups_container)
+        self.groups_layout.setSpacing(2)
+        self.groups_layout.setContentsMargins(2, 2, 2, 2)
+        
+        self.layout.addWidget(self.groups_container)
 
+class FluentRibbonGroup(QWidget):
+    def __init__(self, title, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setSpacing(2)
+        self.layout.setContentsMargins(4, 4, 4, 4)
+        
+        self.setStyleSheet("""
+            FluentRibbonGroup {
+                background-color: #ffffff;
+                border: none;
+                border-radius: 4px;
+            }
+        """)
+        
+        self.buttons_widget = QWidget()
+        self.buttons_layout = QHBoxLayout(self.buttons_widget)
+        self.buttons_layout.setSpacing(4)
+        self.buttons_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.title_label = QLabel(title)
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setStyleSheet("""
+            QLabel {
+                color: #616161;
+                font-size: 11px;
+                padding-top: 4px;
+            }
+        """)
+        
+        self.layout.addWidget(self.buttons_widget)
+        self.layout.addWidget(self.title_label)
+
+class FluentRibbonButton(QToolButton):
+    def __init__(self, text, icon_path=None, parent=None):
+        super().__init__(parent)
+        self.setText(text)
+        if icon_path:
+            self.setIcon(QIcon(resource_path(icon_path)))
+        
+        self.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        self.setIconSize(QSize(32, 32))
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setMinimumSize(QSize(60, 60))
+        
+        self.setStyleSheet("""
+            QToolButton {
+                border: none;
+                border-radius: 4px;
+                background-color: transparent;
+                color: #616161;
+                font-size: 11px;
+                padding: 4px;
+            }
+            QToolButton:hover {
+                background-color: #f0f0f0;
+            }
+            QToolButton:pressed {
+                background-color: #e0e0e0;
+            }
+        """)
+
+class FluentDialog(QDialog):
+    def __init__(self, title, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
+        self.setStyleSheet(FluentStylesheet.get_base_stylesheet())
+        
+        # Imposta layout principale
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setSpacing(10)
+        self.main_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Contenitore per i pulsanti
+        self.button_container = QWidget()
+        self.button_layout = QHBoxLayout(self.button_container)
+        self.button_layout.setContentsMargins(0, 10, 0, 0)
+        
+        # Aggiungi il contenitore dei pulsanti al layout principale
+        self.main_layout.addWidget(self.button_container)
+
+
+class LoginDialog(QDialog):
+    """ Apre la finestra di login """
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Login Database")
+        
+        # Icona e dimensioni della finestra
+        self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
+        self.setFixedSize(400, 500)
+        
+        # Memorizza i parametri di accesso se corretti
+        self.db_params = None  
+        
+        # Inizializza l'interfaccia
+        self.init_ui()     
+
+    def init_ui(self):
         layout = QVBoxLayout(self)
-        self.setLayout(layout)
+        
+        # Form layout per i campi di input
+        form_layout = QFormLayout()
+        
+        # Campi di input con valori predefiniti per host, porta e database
+        self.host_input = QLineEdit("localhost")
+        self.port_input = QLineEdit("5432")
+        self.db_name_input = QLineEdit("loanmanager")
+        self.user_input = QLineEdit()
+        self.password_input = QLineEdit()
+        self.password_input.setEchoMode(QLineEdit.Password)
 
-        self.form_layout = QFormLayout()
+        # Aggiunta dei campi al layout del form
+        form_layout.addRow("Host:", self.host_input)
+        form_layout.addRow("Porta:", self.port_input)
+        form_layout.addRow("Nome Database:", self.db_name_input)
+        form_layout.addRow("Utente:", self.user_input)
+        form_layout.addRow("Password:", self.password_input)
 
+        layout.addLayout(form_layout)
+
+        # Pulsante di login
+        self.login_button = QPushButton("Accedi")
+        self.login_button.clicked.connect(self.handle_login)
+        layout.addWidget(self.login_button)
+
+        # Icona utente
+        image_label = QLabel(self)
+        pixmap = QPixmap(resource_path('user.png'))
+        pixmap = pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        image_label.setPixmap(pixmap)
+        image_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(image_label)
+
+    def handle_login(self):
+        # Recupera i parametri dal form
+        host = self.host_input.text().strip()
+        port = self.port_input.text().strip()
+        db_name = self.db_name_input.text().strip()
+        user = self.user_input.text().strip()
+        password = self.password_input.text().strip()
+
+        # Prova la connessione al database con psycopg2
+        try:
+            conn = psycopg2.connect(
+                dbname=db_name, user=user, password=password, host=host, port=port
+            )
+            conn.close()
+            # Se la connessione ha successo, salva i parametri di accesso
+            self.db_params = {
+                "dbname": db_name,
+                "user": user,
+                "password": password,
+                "host": host,
+                "port": port
+            }
+            self.accept()
+        except psycopg2.Error as e:
+            QMessageBox.critical(self, "Errore di Connessione", f"Errore durante la connessione: {e}")
+            self.db_params = None
+
+    def get_db_params(self):
+        return self.db_params
+
+
+
+class LoanDialog(FluentDialog):
+    def __init__(self, parent=None):
+        super().__init__("New Loan", parent)
+        self.setMinimumWidth(400)
+        
+        # Form layout
+        form = QFormLayout()
+        form.setSpacing(10)
+        
+        # Rate input
         self.rate_entry = QDoubleSpinBox()
         self.rate_entry.setRange(0, 100)
-        self.rate_entry.setDecimals(4)
+        self.rate_entry.setDecimals(6)
         self.rate_entry.setSingleStep(0.005)
-        self.form_layout.addRow("Interest Rate (%):", self.rate_entry)
-
+        form.addRow("Interest Rate (%):", self.rate_entry)
+        
+        # Term input
         self.term_entry = QSpinBox()
         self.term_entry.setRange(1, 100)
-        self.form_layout.addRow("Term (years):", self.term_entry)
-
+        form.addRow("Term (years):", self.term_entry)
+        
+        # Loan amount input
         self.pv_entry = QDoubleSpinBox()
         self.pv_entry.setRange(0, 100000000)
-        self.form_layout.addRow("Loan Amount (€):", self.pv_entry)
-
+        self.pv_entry.setPrefix("€ ")
+        form.addRow("Loan Amount:", self.pv_entry)
+        
+        # Downpayment input
         self.downpayment_entry = QDoubleSpinBox()
         self.downpayment_entry.setRange(0, 100)
-        self.form_layout.addRow("Downpayment (%):", self.downpayment_entry)
-
+        self.downpayment_entry.setSuffix("%")
+        form.addRow("Downpayment:", self.downpayment_entry)
+        
+        # Amortization type
         self.amortization_combobox = QComboBox()
         self.amortization_combobox.addItems(["French", "Italian"])
-        self.form_layout.addRow("Amortization Type:", self.amortization_combobox)
-
+        form.addRow("Amortization Type:", self.amortization_combobox)
+        
+        # Payment frequency
         self.frequency_combobox = QComboBox()
         self.frequency_combobox.addItems(["monthly", "quarterly", "semi-annual", "annual"])
-        self.form_layout.addRow("Payment Frequency:", self.frequency_combobox)
-
-        layout.addLayout(self.form_layout)
-
+        form.addRow("Payment Frequency:", self.frequency_combobox)
+        
+        self.main_layout.insertLayout(0, form)
+        
+        # Additional costs button
         self.additional_costs_button = QPushButton("Add Additional Costs")
         self.additional_costs_button.clicked.connect(self.open_additional_costs_dialog)
-        layout.addWidget(self.additional_costs_button)
-
+        self.main_layout.insertWidget(1, self.additional_costs_button)
+        
+        # Create and Cancel buttons
+        self.create_button = QPushButton("Create Loan")
+        self.create_button.clicked.connect(self.accept)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: black;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+            QPushButton:pressed {
+                background-color: #c0c0c0;
+            }
+        """)
+        
+        self.button_layout.addWidget(self.cancel_button)
+        self.button_layout.addWidget(self.create_button)
+        
         self.additional_costs = {}
 
-        self.submit_button = QPushButton("Create Loan")
-        self.submit_button.clicked.connect(self.accept)
-        layout.addWidget(self.submit_button)
-
     def open_additional_costs_dialog(self):
-        dialog = AdditionalCostsDialog()
+        dialog = AdditionalCostsDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            self.additional_costs = dialog.costs
-            QMessageBox.information(self, "LoanManager Pro", f"Additional Costs: {self.additional_costs}")
+            self.additional_costs = dialog.get_costs()
 
     def get_loan_data(self):
         return {
@@ -546,238 +755,1211 @@ class LoanDialog(QDialog):
             "additional_costs": self.additional_costs
         }
 
-
-class AdditionalCostsDialog(QDialog):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Additional Costs")
-        self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
-        self.setGeometry(100, 100, 400, 400)  # Aumentata l'altezza per ospitare più campi
-
-        layout = QVBoxLayout(self)
-        self.setLayout(layout)
-
-        self.form_layout = QFormLayout()
+class AdditionalCostsDialog(FluentDialog):
+    def __init__(self, parent=None):
+        super().__init__("Additional Costs", parent)
+        self.setMinimumWidth(400)
+        
+        self.costs_layout = QFormLayout()
+        self.costs_layout.setSpacing(10)
+        
         self.cost_entries = []
-
         self.add_cost_field()
-
+        
+        self.main_layout.insertLayout(0, self.costs_layout)
+        
+        # Add another cost button
         add_button = QPushButton("Add Another Cost")
         add_button.clicked.connect(self.add_cost_field)
-        layout.addLayout(self.form_layout)
-        layout.addWidget(add_button)
-
-        # Aggiunta di un campo specifico per le spese periodiche
+        self.main_layout.insertWidget(1, add_button)
+        
+        # Periodic costs
         self.periodic_cost_entry = QDoubleSpinBox()
         self.periodic_cost_entry.setRange(0, 1000000)
-        self.form_layout.addRow(QLabel("Periodic Costs (€):"), self.periodic_cost_entry)
-
+        self.periodic_cost_entry.setPrefix("€ ")
+        self.costs_layout.addRow("Periodic Costs:", self.periodic_cost_entry)
+        
+        # Save and Cancel buttons
         self.save_button = QPushButton("Save Costs")
-        self.save_button.clicked.connect(self.save_costs)
-        layout.addWidget(self.save_button)
-
-        self.costs = {}
+        self.save_button.clicked.connect(self.accept)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: black;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+        """)
+        
+        self.button_layout.addWidget(self.cancel_button)
+        self.button_layout.addWidget(self.save_button)
 
     def add_cost_field(self):
         cost_name = QLineEdit()
         cost_value = QDoubleSpinBox()
         cost_value.setRange(0, 1000000)
-        self.form_layout.addRow(QLabel("Cost Name:"), cost_name)
-        self.form_layout.addRow(QLabel("Cost Amount (€):"), cost_value)
+        cost_value.setPrefix("€ ")
+        
+        self.costs_layout.addRow("Cost Name:", cost_name)
+        self.costs_layout.addRow("Cost Amount:", cost_value)
         self.cost_entries.append((cost_name, cost_value))
 
-    def save_costs(self):
+    def get_costs(self):
+        costs = {}
         for name_entry, value_entry in self.cost_entries:
             name = name_entry.text().strip()
             value = value_entry.value()
             if name and value > 0:
-                self.costs[name] = value
-
-        # Salva le spese periodiche
+                costs[name] = value
+        
         periodic_cost = self.periodic_cost_entry.value()
         if periodic_cost > 0:
-            self.costs['Periodic Costs'] = periodic_cost
+            costs['Periodic Costs'] = periodic_cost
+        return costs
 
-        self.accept()
 
-
-class TAEGCalculationDialog(QDialog):
+class LoanPaymentAnalysisDialog(FluentDialog):
     def __init__(self, loan, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("TAEG Calculations")
-        self.setGeometry(100, 100, 400, 250)
-
+        super().__init__("Payment Analysis", parent)
+        self.setMinimumWidth(500)
         self.loan = loan
+        
+        # Create tabs for different analyses
+        tab_widget = QTabWidget()
+        
+        # Early Payment Tab
+        early_payment_widget = QWidget()
+        early_layout = QVBoxLayout(early_payment_widget)
+        
+        # Extra payment input
+        early_form = QFormLayout()
+        self.extra_payment = QDoubleSpinBox()
+        self.extra_payment.setRange(0, 1000000)
+        self.extra_payment.setPrefix("€ ")
+        self.extra_payment.setSingleStep(50)
+        early_form.addRow("Extra Monthly Payment:", self.extra_payment)
+        
+        # Results display
+        self.early_results = QTextEdit()
+        self.early_results.setReadOnly(True)
+        self.early_results.setMinimumHeight(100)
+        
+        # Calculate button
+        calculate_early_btn = QPushButton("Calculate Early Payoff")
+        calculate_early_btn.clicked.connect(self.calculate_early_payment)
+        
+        early_layout.addLayout(early_form)
+        early_layout.addWidget(calculate_early_btn)
+        early_layout.addWidget(self.early_results)
+        
+        # Faster Payment Tab
+        faster_payment_widget = QWidget()
+        faster_layout = QVBoxLayout(faster_payment_widget)
+        
+        # Years input
+        faster_form = QFormLayout()
+        self.years_to_payoff = QDoubleSpinBox()
+        self.years_to_payoff.setRange(1, self.loan.initial_term)
+        self.years_to_payoff.setValue(self.loan.initial_term / 2)  # Default to half the current term
+        self.years_to_payoff.setSingleStep(0.5)
+        self.years_to_payoff.setSuffix(" years")
+        faster_form.addRow("Desired Years to Pay Off:", self.years_to_payoff)
+        
+        # Results display
+        self.faster_results = QTextEdit()
+        self.faster_results.setReadOnly(True)
+        self.faster_results.setMinimumHeight(100)
+        
+        # Calculate button
+        calculate_faster_btn = QPushButton("Calculate Required Payment")
+        calculate_faster_btn.clicked.connect(self.calculate_faster_payment)
+        
+        faster_layout.addLayout(faster_form)
+        faster_layout.addWidget(calculate_faster_btn)
+        faster_layout.addWidget(self.faster_results)
+        
+        # Add tabs
+        tab_widget.addTab(early_payment_widget, "Early Payoff Analysis")
+        tab_widget.addTab(faster_payment_widget, "Faster Payoff Analysis")
+        
+        self.main_layout.insertWidget(0, tab_widget)
+        
+        # Close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
+    
+    def calculate_early_payment(self):
+        extra_amt = self.extra_payment.value()
+        result = self.loan.pay_early(extra_amt)
+        self.early_results.setText(result)
+    
+    def calculate_faster_payment(self):
+        years = self.years_to_payoff.value()
+        result = self.loan.pay_faster(years)
+        self.faster_results.setText(result)
 
-        layout = QVBoxLayout(self)
-        self.setLayout(layout)
+class AmortizationDialog(FluentDialog):
+    def __init__(self, table_data, parent=None):
+        super().__init__("Amortization Table", parent)
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+        
+        # Create table
+        table_widget = QTableWidget()
+        table_widget.setRowCount(len(table_data))
+        table_widget.setColumnCount(len(table_data.columns))
+        table_widget.setHorizontalHeaderLabels(table_data.columns)
+        
+        for row in range(len(table_data)):
+            for col in range(len(table_data.columns)):
+                value = table_data.iat[row, col]
+                if pd.isnull(value):
+                    value = "N/A"  # Default fallback
+                item = QTableWidgetItem(str(value))
+                table_widget.setItem(row, col, item)
 
+        
+        # Style the table
+        table_widget.setStyleSheet("""
+            QTableWidget {
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                background-color: white;
+            }
+            QHeaderView::section {
+                background-color: #f8f8f8;
+                padding: 6px;
+                border: none;
+                border-right: 1px solid #e0e0e0;
+                border-bottom: 1px solid #e0e0e0;
+                font-weight: bold;
+            }
+        """)
+        
+        self.main_layout.insertWidget(0, table_widget)
+        
+        # Close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
+
+class TAEGCalculationDialog(FluentDialog):
+    def __init__(self, loan, parent=None):
+        super().__init__("TAEG Calculations", parent)
+        self.setMinimumWidth(400)
+        
+        self.loan = loan
+        
+        # Results labels
         self.taeg_periodic_label = QLabel("Calculated TAEG Periodic: N/A")
-        layout.addWidget(self.taeg_periodic_label)
-
         self.taeg_annualized_label = QLabel("Calculated TAEG Annualized: N/A")
-        layout.addWidget(self.taeg_annualized_label)
-
-        self.calculate_taeg_button = QPushButton("Calculate TAEG")
-        self.calculate_taeg_button.clicked.connect(self.calculate_taeg)
-        layout.addWidget(self.calculate_taeg_button)
+        self.main_layout.insertWidget(0, self.taeg_periodic_label)
+        self.main_layout.insertWidget(1, self.taeg_annualized_label)
+        
+        # Calculate button
+        calculate_button = QPushButton("Calculate TAEG")
+        calculate_button.clicked.connect(self.calculate_taeg)
+        self.main_layout.insertWidget(2, calculate_button)
+        
+        # Close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
 
     def calculate_taeg(self):
         taeg_result = self.loan.calculate_taeg()
         if taeg_result is not None:
-            # Aggiorna le etichette con i risultati calcolati
             self.taeg_periodic_label.setText(f"Calculated TAEG Periodic: {self.loan.taeg_periodic:.4f}%")
             self.taeg_annualized_label.setText(f"Calculated TAEG Annualized: {self.loan.taeg_annualized:.4f}%")
         else:
-            QMessageBox.warning(self, "LoanManager Pro", "TAEG calculation failed.")
+            QMessageBox.warning(self, "Error", "TAEG calculation failed.")
 
+class LoanComparisonDialog(FluentDialog):
+    def __init__(self, comparison_text, parent=None):
+        super().__init__("Loan Comparison", parent)
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(400)
+        
+        # Results text area
+        comparison_results = QTextEdit()
+        comparison_results.setReadOnly(True)
+        comparison_results.setText(comparison_text)
+        comparison_results.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                padding: 8px;
+                background-color: white;
+            }
+        """)
+        
+        self.main_layout.insertWidget(0, comparison_results)
+        
+        # Close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
 
-class EditLoanDialog(QDialog):
+class EditLoanDialog(FluentDialog):
     def __init__(self, loan, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Edit Loan")
-        self.setGeometry(100, 100, 400, 300)
-
-        layout = QVBoxLayout(self)
-        self.setLayout(layout)
-
-        self.form_layout = QFormLayout()
-
+        super().__init__("Edit Loan", parent)
+        self.setMinimumWidth(400)
+        
+        form = QFormLayout()
+        form.setSpacing(10)
+        
+        # Rate input
         self.rate_entry = QDoubleSpinBox()
         self.rate_entry.setRange(0, 100)
         self.rate_entry.setDecimals(4)
         self.rate_entry.setSingleStep(0.001)
         self.rate_entry.setValue(loan.initial_rate)
-        self.form_layout.addRow("Interest Rate (%):", self.rate_entry)
-
+        form.addRow("Interest Rate (%):", self.rate_entry)
+        
+        # Term input
         self.term_entry = QSpinBox()
         self.term_entry.setRange(1, 100)
         self.term_entry.setValue(loan.initial_term)
-        self.form_layout.addRow("Term (years):", self.term_entry)
-
+        form.addRow("Term (years):", self.term_entry)
+        
+        # Loan amount input
         self.pv_entry = QDoubleSpinBox()
         self.pv_entry.setRange(0, 100000000)
+        self.pv_entry.setPrefix("€ ")
         self.pv_entry.setValue(loan.loan_amount)
-        self.form_layout.addRow("Loan Amount (€):", self.pv_entry)
-
+        form.addRow("Loan Amount:", self.pv_entry)
+        
+        # Downpayment input
         self.downpayment_entry = QDoubleSpinBox()
         self.downpayment_entry.setRange(0, 100)
+        self.downpayment_entry.setSuffix("%")
         self.downpayment_entry.setValue(loan.downpayment_percent)
-        self.form_layout.addRow("Downpayment (%):", self.downpayment_entry)
-
+        form.addRow("Downpayment:", self.downpayment_entry)
+        
+        # Amortization type
         self.amortization_combobox = QComboBox()
         self.amortization_combobox.addItems(["French", "Italian"])
         self.amortization_combobox.setCurrentText(loan.amortization_type)
-        self.form_layout.addRow("Amortization Type:", self.amortization_combobox)
-
+        form.addRow("Amortization Type:", self.amortization_combobox)
+        
+        # Payment frequency
         self.frequency_combobox = QComboBox()
         self.frequency_combobox.addItems(["monthly", "quarterly", "semi-annual", "annual"])
         self.frequency_combobox.setCurrentText(loan.frequency)
-        self.form_layout.addRow("Payment Frequency:", self.frequency_combobox)
-
-        layout.addLayout(self.form_layout)
-
-        self.submit_button = QPushButton("Update Loan")
-        self.submit_button.clicked.connect(self.accept)
-        layout.addWidget(self.submit_button)
+        form.addRow("Payment Frequency:", self.frequency_combobox)
+        
+        self.main_layout.insertLayout(0, form)
+        
+        # Update and Cancel buttons
+        update_button = QPushButton("Update Loan")
+        update_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        cancel_button.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: black;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+        """)
+        
+        self.button_layout.addWidget(cancel_button)
+        self.button_layout.addWidget(update_button)
 
     def get_updated_loan_data(self):
         return {
-            "rate": self.rate_entry.value(),
-            "term": self.term_entry.value(),
-            "loan_amount": self.pv_entry.value(),
-            "downpayment_percent": self.downpayment_entry.value(),
-            "amortization_type": self.amortization_combobox.currentText(),
-            "frequency": self.frequency_combobox.currentText()
+            "new_rate": self.rate_entry.value(),
+            "new_term": self.term_entry.value(),
+            "new_loan_amount": self.pv_entry.value(),
+            "new_downpayment_percent": self.downpayment_entry.value(),
+            "new_amortization_type": self.amortization_combobox.currentText(),
+            "new_frequency": self.frequency_combobox.currentText()
         }
 
+class PlotDialog(FluentDialog):
+    def __init__(self, loan, parent=None):
+        """
+        Initialize the plot dialog for loan visualization.
+        
+        Args:
+            loan: The loan object containing the data to plot
+            parent: The parent widget (default: None)
+        """
+        super().__init__("Loan Analysis Plot", parent)
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+        self.loan = loan
 
-class ConsolidateLoansDialog(QDialog):
+        # Create matplotlib figure
+        self.figure = Figure(figsize=(8, 6), dpi=100)
+        self.canvas = FigureCanvas(self.figure)
+        
+        # Create matplotlib toolbar
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        
+        # Customize toolbar appearance
+        self.toolbar.setStyleSheet("""
+            QToolBar {
+                border: none;
+                background: transparent;
+                spacing: 8px;
+                padding: 4px;
+            }
+            QToolBar QToolButton {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QToolBar QToolButton:hover {
+                background-color: #f0f0f0;
+                border: 1px solid #e0e0e0;
+            }
+            QToolBar QToolButton:pressed {
+                background-color: #e0e0e0;
+            }
+        """)
+        
+        # Remove matplotlib text/logo and add custom logo
+        self.customize_toolbar()
+        
+        # Create main layout and add widgets
+        self.setup_layout()
+        
+        # Create the actual plot
+        self.create_plot()
+        
+        # Add close button
+        self.add_close_button()
+
+    def customize_toolbar(self):
+        """Remove matplotlib text/logo and add custom app logo to toolbar."""
+        # Remove matplotlib text
+        for action in self.toolbar.actions():
+            if action.text() in ['Subplots', 'Customize']:
+                self.toolbar.removeAction(action)
+        
+        # Try to add custom logo
+        try:
+            logo_path = resource_path('loan_icon.ico')
+            if os.path.exists(logo_path):
+                # Create logo label
+                logo_label = QLabel()
+                logo_pixmap = QPixmap(logo_path).scaled(
+                    24, 24, 
+                    Qt.KeepAspectRatio, 
+                    Qt.SmoothTransformation
+                )
+                logo_label.setPixmap(logo_pixmap)
+                
+                # Add spacer and logo to right side of toolbar
+                spacer = QWidget()
+                spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                self.toolbar.addWidget(spacer)
+                self.toolbar.addWidget(logo_label)
+        except Exception as e:
+            print(f"Could not add logo to toolbar: {e}")
+
+    def setup_layout(self):
+        """Set up the dialog layout with toolbar and canvas."""
+        # Add widgets to main layout
+        self.main_layout.insertWidget(0, self.toolbar)
+        self.main_layout.insertWidget(1, self.canvas)
+        
+        # Add stretch to make plot expand
+        self.main_layout.addStretch(1)
+
+    def create_plot(self):
+        """Create the loan analysis plot."""
+        # Clear any existing plots
+        self.figure.clear()
+        
+        # Get loan amortization table
+        amort = self.loan.table
+        
+        # Create subplot with grid
+        ax = self.figure.add_subplot(111)
+        ax.grid(True, linestyle='--', alpha=0.7)
+        
+        # Plot balance and cumulative interest
+        balance_line = ax.plot(
+            amort.index, 
+            amort.Balance, 
+            label='Balance (€)', 
+            linewidth=2,
+            color='#0078D4'  # Use app's theme color
+        )
+        
+        interest_line = ax.plot(
+            amort.index, 
+            amort.Interest.cumsum(), 
+            label='Interest Paid (€)', 
+            linewidth=2,
+            color='#107C10'  # Complementary green color
+        )
+        
+        # Set title based on amortization type
+        title = f"{self.loan.amortization_type} Amortization Analysis"
+        ax.set_title(title, pad=20, fontsize=12, fontweight='bold')
+        
+        # Customize axes
+        ax.set_xlabel('Date', fontsize=10)
+        ax.set_ylabel('Amount (€)', fontsize=10)
+        
+        # Format y-axis with euro symbol
+        ax.yaxis.set_major_formatter(
+            matplotlib.ticker.FuncFormatter(
+                lambda x, p: f'€{x:,.0f}'
+            )
+        )
+        
+        # Rotate and align x-axis labels
+        self.figure.autofmt_xdate()
+        
+        # Add legend with custom style
+        ax.legend(
+            loc='upper right',
+            fancybox=True,
+            shadow=True,
+            framealpha=0.9
+        )
+        
+        # Set tight layout
+        self.figure.tight_layout()
+        
+        # Refresh canvas
+        self.canvas.draw()
+
+    def add_close_button(self):
+        """Add a close button to the dialog."""
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        close_button.setMinimumWidth(100)
+        self.button_layout.addWidget(close_button)
+        
+    def resizeEvent(self, event):
+        """Handle dialog resize events."""
+        super().resizeEvent(event)
+        self.figure.tight_layout()  # Adjust plot layout when dialog is resized
+        self.canvas.draw_idle()     # Redraw canvas efficiently
+
+class LoanApp(QMainWindow):
+    def __init__(self, db_manager):
+        super().__init__()
+        # Aggiungi l'evento di chiusura
+        self.closeEvent = self.on_close
+        self.db_manager = db_manager
+        self.setWindowTitle("LoanManager Pro")
+        self.setGeometry(100, 100, 1200, 800)
+        self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
+    
+        # Initialize theme manager
+        self.theme_manager = ThemeManager()
+        self.setStyleSheet(self.theme_manager.get_stylesheet())
+    
+        # Initialize database schema
+        self.db_manager.create_db()
+
+        # Initialize state variables
+        self.loans = []
+        self.selected_loan = None
+        self.undo_stack = []
+        self.redo_stack = []
+        
+        # Set up central widget
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QVBoxLayout(self.central_widget)
+        self.main_layout.setSpacing(0)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+    
+        # Create UI components in the correct order
+        self.create_menu_bar()
+        self.create_ribbon()
+        self.create_main_area()  # This creates self.loan_listbox
+        
+        # Apply initial theme
+        self.apply_initial_theme()
+        
+        # Carica i prestiti esistenti dopo aver creato l'UI
+        self.load_existing_loans()
+        
+
+        self.setup_shortcuts()
+
+    def create_menu_bar(self):
+        menubar = self.menuBar()
+    
+        # View menu
+        view_menu = menubar.addMenu('View')
+    
+        # Theme action
+        theme_action = QAction('Toggle Theme', self)
+        theme_action.triggered.connect(self.toggle_theme)
+        theme_action.setShortcut('Ctrl+T')
+        view_menu.addAction(theme_action)
+
+    def create_ribbon(self):
+        ribbon_widget = QWidget()
+        ribbon_widget.setObjectName("ribbon")
+        ribbon_widget.setStyleSheet("""
+            QWidget {
+                background-color: #f8f8f8;
+                border-bottom: 1px solid #e0e0e0;
+            }
+        """)
+        ribbon_layout = QVBoxLayout(ribbon_widget)
+        ribbon_layout.setSpacing(0)
+        ribbon_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Set fixed height for ribbon
+        ribbon_widget.setFixedHeight(80)
+
+        # Create adaptive ribbon tab
+        ribbon_tab = AdaptiveRibbonTab()
+
+        # Loan Operations Group
+        loan_group = CollapsibleRibbonGroup("Loan Operations")
+        new_loan_btn = AdaptiveRibbonButton("New Loan", resource_path("add_icon.png"))
+        new_loan_btn.clicked.connect(self.new_loan)
+        edit_loan_btn = AdaptiveRibbonButton("Edit Loan", resource_path("edit.png"))
+        edit_loan_btn.clicked.connect(self.edit_loan)
+        delete_loan_btn = AdaptiveRibbonButton("Delete Loan", resource_path("delete_icon.png"))
+        delete_loan_btn.clicked.connect(self.delete_loan)
+        loan_group.add_button(new_loan_btn)
+        loan_group.add_button(edit_loan_btn)
+        loan_group.add_button(delete_loan_btn)
+
+        # Analysis Group
+        analysis_group = CollapsibleRibbonGroup("Analysis")
+        payment_btn = AdaptiveRibbonButton("Payment", resource_path("payment.png"))
+        payment_btn.clicked.connect(self.pmt)
+        amort_btn = AdaptiveRibbonButton("Amortization", resource_path("amort.png"))
+        amort_btn.clicked.connect(self.amort)
+        plot_btn = AdaptiveRibbonButton("Plot", resource_path("plot_balances.png"))
+        plot_btn.clicked.connect(self.plot)
+        payment_analysis_btn = AdaptiveRibbonButton("Payment Analysis", resource_path("analysis.png"))
+        payment_analysis_btn.clicked.connect(self.open_payment_analysis)
+
+        
+        analysis_group.add_button(payment_btn)
+        analysis_group.add_button(amort_btn)
+        analysis_group.add_button(plot_btn)
+        analysis_group.add_button(payment_analysis_btn)
+
+
+
+        # Tools Group
+        tools_group = CollapsibleRibbonGroup("Tools")
+        compare_btn = AdaptiveRibbonButton("Compare", resource_path("compare.png"))
+        compare_btn.clicked.connect(self.compare_loans)
+        consolidate_btn = AdaptiveRibbonButton("Consolidate", resource_path("consolidate.png"))
+        consolidate_btn.clicked.connect(self.consolidate_loans)
+        taeg_btn = AdaptiveRibbonButton("TAEG", resource_path("taeg.png"))
+        taeg_btn.clicked.connect(self.open_taeg_dialog)
+        tools_group.add_button(compare_btn)
+        tools_group.add_button(consolidate_btn)
+        tools_group.add_button(taeg_btn)
+
+        # Add groups to ribbon tab
+        ribbon_tab.add_group(loan_group)
+        ribbon_tab.add_group(analysis_group)
+        ribbon_tab.add_group(tools_group)
+
+        ribbon_layout.addWidget(ribbon_tab)
+        self.main_layout.addWidget(ribbon_widget)
+
+    def create_main_area(self):
+        # Main container with stretch
+        main_container = QWidget()
+        main_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_layout = QVBoxLayout(main_container)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+    
+        # Loans list with stretch
+        self.loan_listbox = QListWidget()
+        self.loan_listbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.loan_listbox.itemSelectionChanged.connect(self.select_loan)
+        main_layout.addWidget(self.loan_listbox)
+    
+        self.main_layout.addWidget(main_container)
+
+
+    def apply_initial_theme(self):
+        """Applica gli stili del tema iniziale a tutti i componenti"""
+        # Applica stili di base
+        self.setStyleSheet(self.theme_manager.get_stylesheet())
+    
+        # Applica stili specifici per il ribbon
+        ribbon_widget = self.findChild(QWidget, "ribbon")
+        if ribbon_widget:
+            self.theme_manager.apply_theme_to_widget(ribbon_widget, "ribbon")
+    
+        # Applica stili ai gruppi del ribbon
+        for group in self.findChildren(CollapsibleRibbonGroup):
+            self.theme_manager.apply_theme_to_widget(group, "ribbon")
+    
+        # Applica stili ai bottoni del ribbon
+        for button in self.findChildren(AdaptiveRibbonButton):
+            self.theme_manager.apply_theme_to_widget(button, "ribbon")
+    
+        # Applica stili alla main area
+        if self.loan_listbox:
+            self.theme_manager.apply_theme_to_widget(self.loan_listbox, "main_area")
+
+    def load_existing_loans(self):
+        """Carica i prestiti esistenti dal database"""
+        try:
+            # Clear existing loans
+            self.loans.clear()
+            
+            # Load loan data from database
+            loans_data = self.db_manager.load_all_loans_from_db()
+            
+            if not loans_data:
+                print("No loans found in database")
+                return
+                
+            # Create Loan objects from data
+            for loan_data in loans_data:
+                try:
+                    # Create new loan without auto-saving
+                    loan = Loan(
+                        db_manager=self.db_manager,
+                        rate=float(loan_data[1]),
+                        term=int(loan_data[2]),
+                        loan_amount=float(loan_data[3]),
+                        amortization_type=loan_data[4],
+                        frequency=loan_data[5],
+                        rate_type=loan_data[6],
+                        use_euribor=loan_data[7],
+                        update_frequency=loan_data[8],
+                        downpayment_percent=float(loan_data[9]),
+                        start=loan_data[10].isoformat(),
+                        loan_id=str(loan_data[0])
+                    )
+                    
+                    # Load additional data
+                    loan.additional_costs = self.db_manager.load_additional_costs(loan.loan_id)
+                    loan.periodic_expenses = self.db_manager.load_periodic_expenses(loan.loan_id)
+                    loan.active = loan_data[11]
+                    
+                    # Add to loans list
+                    self.loans.append(loan)
+                    
+                except Exception as e:
+                    print(f"Error loading loan {loan_data[0]}: {str(e)}")
+                    continue
+            
+            # Update UI
+            self.update_loan_listbox()
+            print(f"Successfully loaded {len(self.loans)} loans")
+            
+        except Exception as e:
+            print(f"Error loading loans: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to load loans: {str(e)}")
+                                    
+    def on_close(self, event):
+        """Save all loans before closing"""
+        try:
+            for loan in self.loans:
+                loan.update_db()
+            event.accept()
+        except Exception as e:
+            reply = QMessageBox.question(
+                self, 'Error',
+                f"Error saving loans: {str(e)}\nExit anyway?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                event.accept()
+            else:
+                event.ignore()
+            """Gestisce il salvataggio dei dati prima della chiusura"""
+            try:
+                # Verifica la connessione al database
+                if not self.db_manager.check_connection():
+                    raise Exception("Database connection lost")
+                    
+                # Salva tutti i prestiti nel database
+                for loan in self.loans:
+                    try:
+                        loan.update_db()
+                    except Exception as e:
+                        raise Exception(f"Error saving loan {loan.loan_id}: {str(e)}")
+                        
+                event.accept()
+                
+            except Exception as e:
+                reply = QMessageBox.question(
+                    self, 
+                    'Error',
+                    f"Error saving loans: {str(e)}\n\n"
+                    "Do you want to exit anyway? Unsaved changes will be lost.",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    event.accept()
+                else:
+                    event.ignore()
+                    
+    def toggle_theme(self):
+        # Aggiorna il tema nel theme manager
+        new_stylesheet = self.theme_manager.toggle_theme()
+    
+        # Applica gli stili di base
+        self.setStyleSheet(new_stylesheet)
+    
+        # Applica stili specifici per il ribbon
+        ribbon_widget = self.findChild(QWidget, "ribbon")
+        if ribbon_widget:
+            self.theme_manager.apply_theme_to_widget(ribbon_widget, "ribbon")
+    
+        # Applica stili ai gruppi del ribbon
+        for group in self.findChildren(CollapsibleRibbonGroup):
+            self.theme_manager.apply_theme_to_widget(group, "ribbon")
+    
+        # Applica stili ai bottoni del ribbon
+        for button in self.findChildren(AdaptiveRibbonButton):
+            self.theme_manager.apply_theme_to_widget(button, "ribbon")
+    
+        # Applica stili alla main area
+        if self.loan_listbox:
+            self.theme_manager.apply_theme_to_widget(self.loan_listbox, "main_area")
+    
+        # Mostra feedback all'utente
+        theme_name = self.theme_manager.get_current_theme().capitalize()
+        QMessageBox.information(self, "Theme Changed", f"Switched to {theme_name} theme")
+
+    def new_loan(self):
+        """Create a new loan and save it to database"""
+        dialog = LoanDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            try:
+                # Get loan data from dialog
+                loan_data = dialog.get_loan_data()
+                
+                # Create new loan with auto-save enabled
+                loan = Loan(
+                    db_manager=self.db_manager,
+                    rate=loan_data["rate"] / 100,  # Convert from percentage
+                    term=loan_data["term"],
+                    loan_amount=loan_data["loan_amount"],
+                    amortization_type=loan_data["amortization_type"],
+                    frequency=loan_data["frequency"],
+                    downpayment_percent=loan_data["downpayment_percent"],
+                    additional_costs=loan_data["additional_costs"],
+                    periodic_expenses=loan_data.get("periodic_expenses", {}),
+                    should_save=True  # Enable auto-save for new loans
+                )
+                
+                # Create command for undo/redo functionality
+                command = LoanCommand(
+                    do_action=lambda: self._add_loan(loan),
+                    undo_action=lambda: self._remove_loan(loan),
+                    description=f"Create loan {loan.loan_id}"
+                )
+                
+                # Execute command (this will add the loan to self.loans)
+                self.add_command(command)
+                
+                # Update UI
+                self.update_loan_listbox()
+                
+                # Show success message
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Loan created successfully!\nMonthly payment: {loan.pmt_str}"
+                )
+                
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Failed to create loan: {str(e)}"
+                )
+                print(f"Error creating loan: {str(e)}")
+                            
+    def delete_loan(self):
+        if not self.selected_loan:
+            QMessageBox.warning(self, "Error", "Please select a loan first")
+            return
+        
+        reply = QMessageBox.question(
+            self, 
+            "Confirm Delete", 
+            "Are you sure you want to delete this loan?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                # Rimuovi il prestito dal database
+                Loan.delete_loan(self.loans.index(self.selected_loan))
+                # Rimuovi il prestito dalla lista in memoria
+                self.loans.remove(self.selected_loan)
+                self.selected_loan = None
+                self.update_loan_listbox()
+                QMessageBox.information(self, "Success", "Loan deleted successfully")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Error deleting loan: {str(e)}")
+
+    def update_loan_listbox(self):
+        self.loan_listbox.clear()
+        for i, loan in enumerate(self.loans, 1):
+            item_text = f"Loan {i} - {loan.loan_id} - {loan.amortization_type} amortization"
+            self.loan_listbox.addItem(item_text)
+
+    def select_loan(self):
+        selected_items = self.loan_listbox.selectedItems()
+        if selected_items:
+            index = self.loan_listbox.row(selected_items[0])
+            self.selected_loan = self.loans[index]
+        else:
+            self.selected_loan = None
+
+    def pmt(self):
+        if not self.selected_loan:
+            QMessageBox.warning(self, "Error", "Please select a loan first")
+            return
+        
+        payment_info = (f"Monthly Payment: {self.selected_loan.pmt_str}" if self.selected_loan.amortization_type == "French"
+                       else f"Initial Payment: €{self.selected_loan.table['Payment'].iloc[0]:,.2f}")
+        QMessageBox.information(self, "Payment Information", payment_info)
+
+    def open_payment_analysis(self):
+        if not self.selected_loan:
+            QMessageBox.warning(self, "Error", "Please select a loan first")
+            return
+    
+        dialog = LoanPaymentAnalysisDialog(self.selected_loan, self)
+        dialog.exec_()
+
+    def amort(self):
+        if not self.selected_loan:
+            QMessageBox.warning(self, "Error", "Please select a loan first")
+            return
+    
+        if self.selected_loan.table.isnull().values.any():
+            QMessageBox.warning(self, "Error", "The amortization table contains invalid values.")
+            return
+    
+        dialog = AmortizationDialog(self.selected_loan.table, self)
+        dialog.exec_()
+
+
+    def plot(self):
+        if not self.selected_loan:
+            QMessageBox.warning(self, "Error", "Please select a loan first")
+            return
+    
+        plot_dialog = PlotDialog(self.selected_loan, self)
+        plot_dialog.exec_()
+
+    def compare_loans(self):
+        if len(self.loans) < 2:
+            QMessageBox.warning(self, "Error", "Please create at least two loans to compare")
+            return
+        
+        comparison_text = Loan.compare_loans(self.loans)
+        dialog = LoanComparisonDialog(comparison_text, self)
+        dialog.exec_()
+
+    def consolidate_loans(self):
+        if len(self.loans) < 2:
+            QMessageBox.warning(self, "Error", "Please create at least two loans to consolidate")
+            return
+        
+        dialog = ConsolidateLoansDialog(self.loans, self)
+        if dialog.exec_() == QDialog.Accepted and dialog.consolidated_loan:
+            self.loans.append(dialog.consolidated_loan)
+            self.update_loan_listbox()
+
+    def open_taeg_dialog(self):
+        if not self.selected_loan:
+            QMessageBox.warning(self, "Error", "Please select a loan first")
+            return
+        
+        dialog = TAEGCalculationDialog(self.selected_loan, self)
+        dialog.exec_()
+
+
+    def setup_shortcuts(self):
+        """Configura le scorciatoie da tastiera per do/undo"""
+        from PyQt5.QtGui import QKeySequence
+        from PyQt5.QtWidgets import QShortcut
+    
+        # Crea shortcut per Undo (Ctrl+Z)
+        self.undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+        self.undo_shortcut.activated.connect(self.undo_action)
+    
+        # Crea shortcut per Redo (Ctrl+Y)
+        self.redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
+        self.redo_shortcut.activated.connect(self.redo_action)
+
+    def add_command(self, command):
+        """Aggiunge un comando allo stack e lo esegue"""
+        command.execute()
+        self.undo_stack.append(command)
+        self.redo_stack.clear()  # Pulisce lo stack di redo quando viene eseguita una nuova azione
+
+    def undo_action(self):
+        """Annulla l'ultima azione"""
+        if self.undo_stack:
+            command = self.undo_stack.pop()
+            command.undo()
+            self.redo_stack.append(command)
+            self.update_loan_listbox()
+
+    def redo_action(self):
+        """Ripete l'ultima azione annullata"""
+        if self.redo_stack:
+            command = self.redo_stack.pop()
+            command.execute()
+            self.undo_stack.append(command)
+            self.update_loan_listbox()
+
+# 3. Modifica i metodi che gestiscono le azioni sui prestiti per utilizzare i comandi
+
+    def new_loan(self):
+        dialog = LoanDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            loan_data = dialog.get_loan_data()
+            try:
+                loan = Loan(**loan_data)
+                command = LoanCommand(
+                    do_action=lambda: self._add_loan(loan),
+                    undo_action=lambda: self._remove_loan(loan),
+                    description="Create new loan"
+                )
+                self.add_command(command)
+                QMessageBox.information(self, "Success", "Loan created successfully")
+            except ValueError as e:
+                QMessageBox.warning(self, "Error", str(e))
+
+
+    def new_loan(self):
+        dialog = LoanDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            loan_data = dialog.get_loan_data()
+            try:
+                loan = Loan(db_manager=self.db_manager, **loan_data)
+                command = LoanCommand(
+                    do_action=lambda: self._add_loan(loan),
+                    undo_action=lambda: self._remove_loan(loan),
+                    description="Create new loan"
+                )
+                self.add_command(command)
+                QMessageBox.information(self, "Success", "Loan created successfully")
+            except ValueError as e:
+                QMessageBox.warning(self, "Error", str(e))
+
+
+    def _add_loan(self, loan):
+        """Add loan to both memory and database"""
+        try:
+            # Add to memory list
+            self.loans.append(loan)
+            
+            # Save to database
+            loan.save_to_db()
+            
+            # Update UI
+            self.update_loan_listbox()
+            
+            # Show success message
+            QMessageBox.information(
+                self, 
+                "Success", 
+                f"Loan {loan.loan_id} successfully saved"
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                "Error", 
+                f"Failed to save loan: {str(e)}"
+            )
+            # Remove from memory if database save failed
+            if loan in self.loans:
+                self.loans.remove(loan)
+                
+    def _remove_loan(self, loan):
+        """Helper method per rimuovere un prestito"""
+        if loan in self.loans:
+            Loan.delete_loan(self.loans.index(loan))
+            self.loans.remove(loan)
+            self.update_loan_listbox()
+
+    def edit_loan(self):
+        if not self.selected_loan:
+            QMessageBox.warning(self, "Error", "Please select a loan first")
+            return
+    
+        dialog = EditLoanDialog(self.selected_loan, self)
+        if dialog.exec_() == QDialog.Accepted:
+            loan_data = dialog.get_updated_loan_data()
+            try:
+                old_data = {
+                    "rate": self.selected_loan.initial_rate,
+                    "term": self.selected_loan.initial_term,
+                    "loan_amount": self.selected_loan.loan_amount,
+                    "downpayment_percent": self.selected_loan.downpayment_percent,
+                    "amortization_type": self.selected_loan.amortization_type,
+                    "frequency": self.selected_loan.frequency
+                }
+            
+                command = LoanCommand(
+                    do_action=lambda: self._update_loan(self.selected_loan, loan_data),
+                    undo_action=lambda: self._update_loan(self.selected_loan, old_data),
+                    description="Edit loan"
+                )
+                self.add_command(command)
+                QMessageBox.information(self, "Success", "Loan updated successfully")
+            except ValueError as e:
+                QMessageBox.warning(self, "Error", str(e))
+
+    def _update_loan(self, loan, data):
+        """Helper method per aggiornare un prestito"""
+        loan.edit_loan(**data)
+        self.update_loan_listbox()
+
+class ConsolidateLoansDialog(FluentDialog):
     def __init__(self, loans, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Consolidate Loans")
-        self.setGeometry(100, 100, 400, 300)
-
+        super().__init__("Consolidate Loans", parent)
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
+        
         self.loans = loans
         self.selected_loans = []
         self.consolidated_loan = None
-        self.consolidated_summary = ""
-
-        self.frequency_combobox = QComboBox(self)
-        self.frequency_combobox.addItems(["monthly", "quarterly", "semi-annual", "annual"])
-
-        layout = QVBoxLayout(self)
-        self.setLayout(layout)
-
-        self.loan_list = QListWidget(self)
+        
+        # Create loan selection list
+        self.loan_list = QListWidget()
         self.loan_list.setSelectionMode(QListWidget.MultiSelection)
-
         for loan in loans:
             item_text = f"Loan ID: {loan.loan_id}, Amount: €{loan.loan_amount:,.2f}, Rate: {loan.initial_rate * 100:.2f}%"
-            item = QListWidgetItem(item_text)
-            self.loan_list.addItem(item)
-        layout.addWidget(self.loan_list)
-
-        layout.addWidget(QLabel("Select Payment Frequency:"))
-        layout.addWidget(self.frequency_combobox)
-
-        consolidate_button = QPushButton("Consolidate Loans", self)
+            self.loan_list.addItem(item_text)
+        
+        # Create frequency selection
+        frequency_layout = QHBoxLayout()
+        frequency_label = QLabel("Payment Frequency:")
+        self.frequency_combobox = QComboBox()
+        self.frequency_combobox.addItems(["monthly", "quarterly", "semi-annual", "annual"])
+        frequency_layout.addWidget(frequency_label)
+        frequency_layout.addWidget(self.frequency_combobox)
+        
+        # Add widgets to main layout
+        self.main_layout.insertWidget(0, self.loan_list)
+        self.main_layout.insertLayout(1, frequency_layout)
+        
+        # Create buttons
+        consolidate_button = QPushButton("Consolidate Loans")
         consolidate_button.clicked.connect(self.consolidate_loans)
-        layout.addWidget(consolidate_button)
-
-        show_summary_button = QPushButton("Show Consolidated Loan Summary", self)
-        show_summary_button.clicked.connect(self.show_summary)
-        layout.addWidget(show_summary_button)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        cancel_button.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: black;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+        """)
+        
+        self.button_layout.addWidget(cancel_button)
+        self.button_layout.addWidget(consolidate_button)
 
     def consolidate_loans(self):
         selected_items = self.loan_list.selectedItems()
-        self.selected_loans = [self.loans[self.loan_list.row(item)] for item in selected_items]
+        selected_indices = [self.loan_list.row(item) for item in selected_items]
+        self.selected_loans = [self.loans[i] for i in selected_indices]
+        
         if len(self.selected_loans) < 2:
-            QMessageBox.warning(self, "LoanManager Pro", "Please select at least two loans to consolidate.")
+            QMessageBox.warning(self, "Error", "Please select at least two loans to consolidate")
             return
-
+        
         frequency = self.frequency_combobox.currentText()
         try:
             self.consolidated_loan = Loan.consolidate_loans(self.selected_loans, frequency)
-
-            self.consolidated_summary = (
-                f"Summary\n"
-                f"------------------------------------------------------------\n"
-                f"Downpayment: €{self.consolidated_loan.downpayment:,.2f} ({self.consolidated_loan.downpayment_percent}%)\n"
-                f"Payment: {self.consolidated_loan.pmt_str}\n"
-                f"Payoff Date: {self.consolidated_loan.table.index.date[-1]}\n"
-                f"Interest Paid: €{self.consolidated_loan.table['Interest'].cumsum().iloc[-1]:,.2f}\n"
-                f"TAEG Periodic: {self.consolidated_loan.taeg.get('periodic', 'N/A'):.4f}%\n"
-                f"TAEG Annualized: {self.consolidated_loan.taeg.get('annualized', 'N/A'):.4f}%\n"
-            )
-
-            QMessageBox.information(self, "LoanManager Pro", "Loans consolidated successfully.")
+            QMessageBox.information(self, "Success", "Loans consolidated successfully")
+            self.accept()
         except Exception as e:
-            QMessageBox.warning(self, "LoanManager Pro", f"Loan consolidation failed: {str(e)}")
-
-    def show_summary(self):
-        if self.consolidated_summary:
-            QMessageBox.information(self, "Consolidated Loan Summary", self.consolidated_summary)
-        else:
-            QMessageBox.warning(self, "LoanManager Pro", "No loan has been consolidated yet.")
-
+            QMessageBox.warning(self, "Error", f"Consolidation failed: {str(e)}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    
+    # Carica il font Source Sans Pro
+    font_files = [
+        resource_path("SourceSansPro-Regular.ttf"),
+        resource_path("SourceSansPro-Bold.ttf"),
+        resource_path("SourceSansPro-Italic.ttf"),
+    ]
 
-    splash_pix = QPixmap(resource_path('loan_splashcreen.png'))
-    splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
-    splash.setMask(splash_pix.mask())
-    splash.show()
+    for font_file in font_files:
+        font_id = QFontDatabase.addApplicationFont(font_file)
+        if font_id == -1:
+            print(f"Errore nel caricamento del font: {font_file}")
 
-    time.sleep(2)
+    # Ottieni il nome della famiglia del font caricato
+    font_families = QFontDatabase.applicationFontFamilies(font_id)
+    if font_families:
+        font_family = font_families[0]
+    else:
+        font_family = "Source Sans Pro"  # Come fallback
 
-    main_window = LoanApp()
-    main_window.show()
-    splash.finish(main_window)
+    # Imposta il font per l'applicazione
+    font = QFont(font_family, 11)
+    app.setFont(font)
 
-    # Ensure that app.exec_() is called only once
-    try:
-        sys.exit(app.exec_())
-    except SystemExit:
-        pass
+    # Mostra la finestra di login
+    login_dialog = LoginDialog()
+    if login_dialog.exec_() == QDialog.Accepted:
+        # Se il login ha successo, procedi con la visualizzazione dello splash screen e dell'applicazione principale
+        
+        # Recupera i parametri del database dal dialogo di login
+        db_params = login_dialog.get_db_params()
+        
+        # Crea un'istanza di DbManager con i parametri del database
+        db_manager = DbManager(**db_params)
+        
+        # Crea le tabelle necessarie nel database
+        db_manager.create_db()
+
+        # Create and show splash screen
+        splash_pix = QPixmap(resource_path('loan_splashcreen.png'))
+        splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
+        splash.setMask(splash_pix.mask())
+        splash.show()
+        
+        # Simulate some loading time
+        time.sleep(2)
+        
+        # Create and show main window
+        main_window = LoanApp(db_manager)
+        main_window.show()
+        # Ensure light theme is set
+        theme_manager = ThemeManager()
+        theme_manager.current_theme = "light"
+        main_window.setStyleSheet(theme_manager.get_stylesheet())
+        splash.finish(main_window)
+        
+        # Start event loop
+        try:
+            sys.exit(app.exec_())
+        except SystemExit:
+            pass
+    else:
+        # Se il login fallisce, esci dall'applicazione
+        sys.exit()
