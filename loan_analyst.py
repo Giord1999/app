@@ -1,4 +1,3 @@
-from typing import Self
 import requests
 import numpy as np
 import numpy_financial as npf
@@ -7,11 +6,13 @@ import datetime as dt
 from dateutil.relativedelta import relativedelta
 import matplotlib.pyplot as plt
 import os
+import seaborn as sns
 import uuid
 import psycopg2
 from scipy.optimize import brentq, differential_evolution
+from ecbdata import ecbdata
 
-
+#TODO: rendere i parametri "interest_rates", "loan_lives" e "default_probabilities" della funzione def calculate_probabilistic_pricing user defined
 
 class DbManager:
     def __init__(self, dbname, user, password, host='localhost', port='5432'):
@@ -821,7 +822,161 @@ class Loan:
         consolidated_loan.save_to_db(table_name="consolidated_loans")
 
         return consolidated_loan
-    
+
+    def calculate_probabilistic_pricing(self, 
+                                    initial_default: float = 0.2,
+                                    default_decay: float = 0.9, 
+                                    final_default: float = 0.4,
+                                    recovery_rate: float = 0.4,
+                                    num_iterations: int = 100,
+                                    loan_lives: list = None,
+                                    interest_rates: np.ndarray = None,
+                                    default_probabilities: list = None) -> pd.DataFrame:
+        """
+        Calculate probabilistic loan pricing using Monte Carlo simulation.
+
+        Parameters
+        ----------
+        initial_default : float, optional
+            Initial default probability, default 0.2 (20%)
+        default_decay : float, optional
+            Default probability decay rate, default 0.9 (90%)
+        final_default : float, optional
+            Final default probability, default 0.4 (40%)
+        recovery_rate : float, optional
+            Recovery rate in case of default, default 0.4 (40%)
+        num_iterations : int, optional
+            Number of Monte Carlo iterations, default 100
+        loan_lives : list, optional
+            List of loan durations in years, default [5,10,20]
+        interest_rates : array-like, optional
+            Array of interest rates, default np.arange(0.3, 0.41, 0.05)
+        default_probabilities : list, optional
+            List of default probabilities, default [0.1, 0.2, 0.3]
+
+        Returns
+        -------
+        pd.DataFrame
+            Styled DataFrame with IRR calculations
+        """
+        # Input validation
+        if loan_lives is None:
+            loan_lives = [5, 10, 20]
+        if interest_rates is None:
+            interest_rates = np.arange(0.3, 0.41, 0.05)
+        if default_probabilities is None:
+            default_probabilities = [0.1, 0.2, 0.3]
+
+        # Validate ranges
+        if not all(0 < r < 1 for r in interest_rates):
+            raise ValueError("Interest rates must be between 0 and 1")
+        if not all(l > 0 for l in loan_lives):
+            raise ValueError("Loan lives must be positive")
+        if not all(0 <= p <= 1 for p in default_probabilities):
+            raise ValueError("Default probabilities must be between 0 and 1")
+
+        results = []
+        
+        # Convert amortization schedule DataFrame to cash flow list
+        unadjusted_cashflows = self.table['Payment'].tolist()
+        
+        def calculate_default_probability(loan_life):
+            default_probability_values = []
+            current_default = initial_default
+            
+            for i in range(1, loan_life + 3):
+                if i == 1:
+                    default_probability_values.append(current_default)
+                elif i < loan_life:
+                    current_default *= default_decay
+                    default_probability_values.append(current_default) 
+                elif i == loan_life:
+                    default_probability_values.append(final_default)
+                elif i == loan_life + 1:
+                    default_probability_values.append(0)
+                else: # i == loan_life + 2
+                    default_probability_values.append(recovery_rate)
+            return default_probability_values
+
+        def calculate_adjusted_cashflow(default_probs, cashflows):
+            adjusted_flows = []
+            
+            for i, (default_prob, cf) in enumerate(zip(default_probs, cashflows)):
+                if i == 0: # First flow
+                    interest_portion = self.rate * self.loan_amount
+                    adj_interest = interest_portion * (1 - default_prob)
+                    adjusted_flows.append(-self.loan_amount + adj_interest)
+                elif default_prob == recovery_rate and cf == self.loan_amount:
+                    adj_cf = (self.rate * self.loan_amount) * (1 - default_prob)
+                    adjusted_flows.append(adj_cf)
+                elif default_prob == recovery_rate:
+                    adjusted_flows.append(recovery_rate * self.loan_amount)
+                elif default_prob == 0 and cf == 0:
+                    adjusted_flows.append(0)
+                else:
+                    adjusted_flows.append(cf * (1 - default_prob))
+                    
+            return adjusted_flows
+
+        # Execute iterations
+        irr_values = []
+        rate_values = []
+        default_prob_values = [] 
+        life_values = []
+
+        for _ in range(num_iterations):
+            for rate in interest_rates:
+                for default_prob in default_probabilities:
+                    for life in loan_lives:
+                        try:
+                            # Calculate default probabilities
+                            probs = calculate_default_probability(life)
+                            
+                            # Calculate adjusted cash flows
+                            adj_flows = calculate_adjusted_cashflow(probs, unadjusted_cashflows)
+                            
+                            # Calculate IRR
+                            irr = npf.irr(adj_flows)
+                            
+                            irr_values.append(irr)
+                            rate_values.append(rate)
+                            default_prob_values.append(default_prob)
+                            life_values.append(life)
+                            
+                            results.append({
+                                'Interest Rate': f"{rate:.2%}",
+                                'Loan Life': life,
+                                'Initial Default Probability': f"{default_prob:.2%}",
+                                'IRR': irr
+                            })
+                        except Exception as e:
+                            print(f"IRR calculation failed for rate={rate}, prob={default_prob}, life={life}: {str(e)}")
+                            continue
+
+        # Create results DataFrame
+        df = pd.DataFrame(results)
+        
+        # Calculate means and standard deviation
+        avg_results = df.groupby(['Interest Rate', 'Loan Life', 'Initial Default Probability']).mean().reset_index()
+        std_dev = np.std(irr_values)
+        
+        # Adjust IRR with standard deviation
+        avg_results['IRR'] = avg_results['IRR'] - std_dev
+        
+        # Create pivot table with formatting
+        pivot = pd.pivot_table(
+            avg_results,
+            values='IRR', 
+            index=['Interest Rate', 'Loan Life'],
+            columns='Initial Default Probability',
+            fill_value=0
+        )
+        
+        # Apply formatting
+        styled = pivot.style.background_gradient(cmap=sns.color_palette("RdYlGn", as_cmap=True))
+        styled = styled.format("{:.2%}")
+        
+        return styled
 
     @classmethod
     def clear_loans(cls):
