@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QSizePolicy, QScrollArea, QAction, QTabWidget,QGridLayout)
+                             QToolButton, QSizePolicy, QScrollArea, QAction, QTabWidget)
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont
@@ -12,16 +12,17 @@ import sys
 import os
 import time
 import matplotlib
+import numpy as np
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-import numpy as np
 import pandas as pd
 import psycopg2
 from loan import Loan, DbManager
 
 
+#TODO: implementare i tassi variabili
 
 
 def resource_path(relative_path):
@@ -1368,9 +1369,14 @@ class LoanApp(QMainWindow):
         consolidate_btn.clicked.connect(self.consolidate_loans)
         taeg_btn = AdaptiveRibbonButton("TAEG", resource_path("taeg.png"))
         taeg_btn.clicked.connect(self.open_taeg_dialog)
+
+        prob_pricing_btn = AdaptiveRibbonButton("Probabilistic Pricing", resource_path("probability.png"))
+        prob_pricing_btn.clicked.connect(self.open_probabilistic_pricing)
+        analysis_group.add_button(prob_pricing_btn)
         tools_group.add_button(compare_btn)
         tools_group.add_button(consolidate_btn)
         tools_group.add_button(taeg_btn)
+        
 
         # Add groups to ribbon tab
         ribbon_tab.add_group(loan_group)
@@ -1454,7 +1460,7 @@ class LoanApp(QMainWindow):
             self.loans.append(loan)  # Aggiungiamo l'oggetto Loan alla lista
 
             # Mostra il prestito nella UI
-            loan_text = f"Prestito {loan_id} - €{amount:,.2f} ({amort_type})"
+            loan_text = f"Loan {loan_id} - €{amount:,.2f} ({amort_type})"
             self.loan_listbox.addItem(loan_text)
 
         print(f"DEBUG: Prestiti caricati nella lista ({len(self.loans)})")
@@ -1702,6 +1708,14 @@ class LoanApp(QMainWindow):
         dialog = TAEGCalculationDialog(self.selected_loan, self)
         dialog.exec_()
 
+    def open_probabilistic_pricing(self):
+        if not self.selected_loan:
+            QMessageBox.warning(self, "Error", "Please select a loan first")
+            return
+            
+        dialog = ProbabilisticPricingDialog(self.selected_loan, self)
+        dialog.exec_()
+
 
     def setup_shortcuts(self):
         """Configura le scorciatoie da tastiera per do/undo"""
@@ -1941,6 +1955,187 @@ class ConsolidateLoansDialog(FluentDialog):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Consolidation failed: {str(e)}")
 
+class ProbabilisticPricingDialog(FluentDialog):
+    def __init__(self, loan, parent=None):
+        super().__init__("Probabilistic Loan Pricing", parent)
+        self.loan = loan
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+        self.setup_ui()
+        self.apply_styles()
+        
+    def setup_ui(self):
+        main_widget = QWidget()
+        main_layout = QVBoxLayout(main_widget)
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Create scrollable area
+        scroll = QScrollArea()
+        scroll.setWidget(main_widget)
+        scroll.setWidgetResizable(True)
+        
+        # Parameters section
+        params_group = QWidget()
+        form = QFormLayout(params_group)
+        form.setSpacing(10)
+        
+        # Section headers
+        params_label = QLabel("Model Parameters")
+        params_label.setProperty("class", "section-header")
+        
+        # Initialize inputs with styling
+        self.initial_default = self.create_double_spinbox(0.2)
+        self.default_decay = self.create_double_spinbox(0.9)
+        self.final_default = self.create_double_spinbox(0.4)
+        self.recovery_rate = self.create_double_spinbox(0.4)
+        self.iterations = self.create_spinbox(100, 10, 1000)
+        
+        # Add tooltips
+        self.initial_default.setToolTip("Initial probability of default (0-1)")
+        self.default_decay.setToolTip("Rate at which default probability decays")
+        
+        # Lists section
+        lists_label = QLabel("Simulation Parameters")
+        lists_label.setProperty("class", "section-header")
+        
+        self.loan_lives = self.create_line_edit("5,10,20")
+        self.interest_rates = self.create_line_edit("0.30,0.35,0.40")
+        self.default_probs = self.create_line_edit("0.1,0.2,0.3")
+        
+        # Add form rows with consistent spacing
+        form.addRow(params_label)
+        form.addRow(self.create_label("Initial Default:"), self.initial_default)
+        form.addRow(self.create_label("Default Decay:"), self.default_decay)
+        form.addRow(self.create_label("Final Default:"), self.final_default)
+        form.addRow(self.create_label("Recovery Rate:"), self.recovery_rate)
+        form.addRow(self.create_label("Iterations:"), self.iterations)
+        
+        form.addRow(lists_label)
+        form.addRow(self.create_label("Loan Lives (years):"), self.loan_lives)
+        form.addRow(self.create_label("Interest Rates:"), self.interest_rates)
+        form.addRow(self.create_label("Default Probabilities:"), self.default_probs)
+        
+        # Results view
+        self.results_view = QTextEdit()
+        self.results_view.setReadOnly(True)
+        self.results_view.setMinimumHeight(300)
+        
+        # Button layout
+        button_layout = QHBoxLayout()
+        calculate_btn = QPushButton("Calculate Pricing")
+        calculate_btn.setProperty("class", "primary-button")
+        calculate_btn.clicked.connect(self.calculate_pricing)
+        button_layout.addStretch()
+        button_layout.addWidget(calculate_btn)
+        
+        # Assemble layout
+        main_layout.addWidget(params_group)
+        main_layout.addWidget(self.results_view)
+        main_layout.addLayout(button_layout)
+        
+        self.setLayout(QVBoxLayout())
+        self.layout().addWidget(scroll)
+    
+    def create_double_spinbox(self, default_value):
+        spinbox = QDoubleSpinBox()
+        spinbox.setRange(0, 1)
+        spinbox.setValue(default_value)
+        spinbox.setDecimals(2)
+        spinbox.setSingleStep(0.05)
+        spinbox.setProperty("class", "spinbox")
+        return spinbox
+    
+    def create_spinbox(self, default_value, min_val, max_val):
+        spinbox = QSpinBox()
+        spinbox.setRange(min_val, max_val)
+        spinbox.setValue(default_value)
+        spinbox.setSingleStep(10)
+        spinbox.setProperty("class", "spinbox")
+        return spinbox
+    
+    def create_line_edit(self, placeholder):
+        line_edit = QLineEdit()
+        line_edit.setPlaceholderText(placeholder)
+        line_edit.setProperty("class", "line-edit")
+        return line_edit
+    
+    def create_label(self, text):
+        label = QLabel(text)
+        label.setProperty("class", "form-label")
+        return label
+    
+    def apply_styles(self):
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f5f5f5;
+            }
+            .section-header {
+                font-size: 16px;
+                font-weight: bold;
+                color: #2c3e50;
+                padding: 10px 0;
+            }
+            .form-label {
+                color: #34495e;
+                font-weight: 500;
+            }
+            .spinbox, .line-edit {
+                padding: 5px;
+                border: 1px solid #bdc3c7;
+                border-radius: 4px;
+                background-color: white;
+            }
+            .primary-button {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            .primary-button:hover {
+                background-color: #2980b9;
+            }
+            QTextEdit {
+                border: 1px solid #bdc3c7;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+
+    def parse_comma_list(self, text, convert_type=float):
+        """Parse comma-separated values into list"""
+        try:
+            return [convert_type(x.strip()) for x in text.split(',') if x.strip()]
+        except ValueError:
+            raise ValueError(f"Invalid format. Expected comma-separated {convert_type.__name__} values")
+    
+    def calculate_pricing(self):
+        try:
+            # Parse input lists
+            loan_lives = self.parse_comma_list(self.loan_lives.text(), int) if self.loan_lives.text() else None
+            interest_rates = np.array(self.parse_comma_list(self.interest_rates.text())) if self.interest_rates.text() else None
+            default_probs = self.parse_comma_list(self.default_probs.text()) if self.default_probs.text() else None
+            
+            # Calculate results
+            results = self.loan.calculate_probabilistic_pricing(
+                initial_default=self.initial_default.value(),
+                default_decay=self.default_decay.value(),
+                final_default=self.final_default.value(),
+                recovery_rate=self.recovery_rate.value(),
+                num_iterations=self.iterations.value(),
+                loan_lives=loan_lives,
+                interest_rates=interest_rates,
+                default_probabilities=default_probs
+            )
+            
+            # Convert styled DataFrame to HTML and display
+            self.results_view.setHtml(results.to_html())
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to calculate pricing: {str(e)}")
+            
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
