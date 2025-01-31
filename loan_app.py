@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont
-from PyQt5.QtCore import Qt, QSize, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QSize
 import sys
 import os
 import time
@@ -19,18 +19,19 @@ from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 import psycopg2
-from loan_analyst import Loan, DbManager
+from loan import Loan, DbManager
 
 
 
 
-def resource_path(relative_path, resource_type='assets'):
+def resource_path(relative_path):
     """Ottiene il percorso assoluto delle risorse"""
     try:
-        base_path = sys._MEIPASS2
+        base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
-    return os.path.join(base_path, resource_type, relative_path)
+    return os.path.join(base_path, 'assets', relative_path)
+
 
 class LoanCommand:
     def __init__(self, do_action, undo_action, description):
@@ -1266,6 +1267,11 @@ class LoanApp(QMainWindow):
         # Initialize database schema
         self.db_manager.create_db()
 
+        if not self.db_manager.check_connection():
+            QMessageBox.critical(self, "Database Error", "Impossibile connettersi al database.")
+            return
+
+
         # Initialize state variables
         self.loans = []
         self.selected_loan = None
@@ -1289,7 +1295,6 @@ class LoanApp(QMainWindow):
         
         # Carica i prestiti esistenti dopo aver creato l'UI
         self.load_existing_loans()
-        
 
         self.setup_shortcuts()
 
@@ -1413,58 +1418,49 @@ class LoanApp(QMainWindow):
         if self.loan_listbox:
             self.theme_manager.apply_theme_to_widget(self.loan_listbox, "main_area")
 
+
     def load_existing_loans(self):
-        """Carica i prestiti esistenti dal database"""
-        try:
-            # Clear existing loans
-            self.loans.clear()
+        """Carica i prestiti dal database e li mostra nella UI."""
+        self.loans = []  # Puliamo la lista dei prestiti
+        self.loan_listbox.clear()
+
+        loans_from_db = self.db_manager.load_all_loans_from_db()  # Recuperiamo i dati
+
+        if not loans_from_db:
+            print("DEBUG: Nessun prestito trovato nel database.")  
+            QMessageBox.information(self, "Info", "Nessun prestito trovato nel database.")
+            return
+
+        for loan_data in loans_from_db:
+            # Creazione dell'oggetto Loan dai dati del database
+            loan_id, rate, term, amount, amort_type, frequency, rate_type, use_euribor, update_freq, downpayment, start_date, active = loan_data
             
-            # Load loan data from database
-            loans_data = self.db_manager.load_all_loans_from_db()
+            loan = Loan(
+                db_manager=self.db_manager,
+                rate=float(rate),
+                term=int(term),
+                loan_amount=float(amount),
+                amortization_type=amort_type,
+                frequency=frequency,
+                rate_type=rate_type,
+                use_euribor=use_euribor,
+                update_frequency=update_freq,
+                downpayment_percent=float(downpayment),
+                start=start_date.isoformat(),
+                loan_id=str(loan_id),
+                should_save=False  # Evitiamo di salvarlo di nuovo nel DB
+            )
             
-            if not loans_data:
-                print("No loans found in database")
-                return
-                
-            # Create Loan objects from data
-            for loan_data in loans_data:
-                try:
-                    # Create new loan without auto-saving
-                    loan = Loan(
-                        db_manager=self.db_manager,
-                        rate=float(loan_data[1]),
-                        term=int(loan_data[2]),
-                        loan_amount=float(loan_data[3]),
-                        amortization_type=loan_data[4],
-                        frequency=loan_data[5],
-                        rate_type=loan_data[6],
-                        use_euribor=loan_data[7],
-                        update_frequency=loan_data[8],
-                        downpayment_percent=float(loan_data[9]),
-                        start=loan_data[10].isoformat(),
-                        loan_id=str(loan_data[0])
-                    )
-                    
-                    # Load additional data
-                    loan.additional_costs = self.db_manager.load_additional_costs(loan.loan_id)
-                    loan.periodic_expenses = self.db_manager.load_periodic_expenses(loan.loan_id)
-                    loan.active = loan_data[11]
-                    
-                    # Add to loans list
-                    self.loans.append(loan)
-                    
-                except Exception as e:
-                    print(f"Error loading loan {loan_data[0]}: {str(e)}")
-                    continue
-            
-            # Update UI
-            self.update_loan_listbox()
-            print(f"Successfully loaded {len(self.loans)} loans")
-            
-        except Exception as e:
-            print(f"Error loading loans: {str(e)}")
-            QMessageBox.critical(self, "Error", f"Failed to load loans: {str(e)}")
-                                    
+            self.loans.append(loan)  # Aggiungiamo l'oggetto Loan alla lista
+
+            # Mostra il prestito nella UI
+            loan_text = f"Prestito {loan_id} - €{amount:,.2f} ({amort_type})"
+            self.loan_listbox.addItem(loan_text)
+
+        print(f"DEBUG: Prestiti caricati nella lista ({len(self.loans)})")
+
+      
+
     def on_close(self, event):
         """Save all loans before closing"""
         try:
@@ -1604,7 +1600,7 @@ class LoanApp(QMainWindow):
         if reply == QMessageBox.Yes:
             try:
                 # Rimuovi il prestito dal database
-                Loan.delete_loan(self.loans.index(self.selected_loan))
+                DbManager.delete_loan(self.loans.index(self.selected_loan))
                 # Rimuovi il prestito dalla lista in memoria
                 self.loans.remove(self.selected_loan)
                 self.selected_loan = None
@@ -1619,13 +1615,27 @@ class LoanApp(QMainWindow):
             item_text = f"Loan {i} - {loan.loan_id} - {loan.amortization_type} amortization"
             self.loan_listbox.addItem(item_text)
 
+
     def select_loan(self):
-        selected_items = self.loan_listbox.selectedItems()
-        if selected_items:
-            index = self.loan_listbox.row(selected_items[0])
-            self.selected_loan = self.loans[index]
-        else:
-            self.selected_loan = None
+        """Seleziona un prestito dalla lista e lo imposta come attivo."""
+        index = self.loan_listbox.currentRow()
+
+        # Controlliamo se ci sono prestiti disponibili
+        if not self.loans:
+            print("DEBUG: Nessun prestito in self.loans")
+            QMessageBox.warning(self, "Errore", "Nessun prestito disponibile.")
+            return
+
+        # Controlliamo se l'indice è valido
+        if index < 0 or index >= len(self.loans):
+            print(f"DEBUG: Indice {index} fuori dal range (0-{len(self.loans)-1})")
+            QMessageBox.warning(self, "Errore", "Selezione non valida.")
+            return  
+
+        # Selezioniamo il prestito come oggetto Loan
+        self.selected_loan = self.loans[index]
+        print(f"DEBUG: Prestito selezionato: {self.selected_loan.loan_id}")  # Ora funziona!
+
 
     def pmt(self):
         if not self.selected_loan:
@@ -1794,44 +1804,78 @@ class LoanApp(QMainWindow):
                 self.loans.remove(loan)
                 
     def _remove_loan(self, loan):
-        """Helper method per rimuovere un prestito"""
-        if loan in self.loans:
-            Loan.delete_loan(self.loans.index(loan))
-            self.loans.remove(loan)
-            self.update_loan_listbox()
+        try:
+            index = self.loans.index(loan)
+            if index >= 0:
+                # Remove from the list
+                del self.loans[index]
+                # Update the UI
+                self.update_loan_listbox()
+                # Reset selected loan if it was the one removed
+                if self.selected_loan == loan:
+                    self.selected_loan = None
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Could not find loan to remove")
+            return False
+        return True
 
     def edit_loan(self):
         if not self.selected_loan:
             QMessageBox.warning(self, "Error", "Please select a loan first")
             return
-    
+
         dialog = EditLoanDialog(self.selected_loan, self)
         if dialog.exec_() == QDialog.Accepted:
-            loan_data = dialog.get_updated_loan_data()
             try:
+                loan_data = dialog.get_updated_loan_data()
+                
+                # Store old data for undo functionality
                 old_data = {
-                    "rate": self.selected_loan.initial_rate,
-                    "term": self.selected_loan.initial_term,
-                    "loan_amount": self.selected_loan.loan_amount,
-                    "downpayment_percent": self.selected_loan.downpayment_percent,
-                    "amortization_type": self.selected_loan.amortization_type,
-                    "frequency": self.selected_loan.frequency
+                    "new_rate": self.selected_loan.initial_rate * 100,  # Convert to percentage
+                    "new_term": self.selected_loan.initial_term,
+                    "new_loan_amount": self.selected_loan.loan_amount,
+                    "new_downpayment_percent": self.selected_loan.downpayment_percent,
+                    "new_amortization_type": self.selected_loan.amortization_type,
+                    "new_frequency": self.selected_loan.frequency
                 }
-            
+                
+                # Create and execute command
                 command = LoanCommand(
                     do_action=lambda: self._update_loan(self.selected_loan, loan_data),
                     undo_action=lambda: self._update_loan(self.selected_loan, old_data),
-                    description="Edit loan"
+                    description=f"Edit loan {self.selected_loan.loan_id}"
                 )
+                
                 self.add_command(command)
                 QMessageBox.information(self, "Success", "Loan updated successfully")
-            except ValueError as e:
-                QMessageBox.warning(self, "Error", str(e))
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to update loan: {str(e)}")
+
 
     def _update_loan(self, loan, data):
-        """Helper method per aggiornare un prestito"""
-        loan.edit_loan(**data)
-        self.update_loan_listbox()
+        """Helper method to update a loan and save to database"""
+        try:
+            # Update loan attributes and save to database
+            loan.edit_loan(
+                new_rate=data['new_rate'],
+                new_term=data['new_term'],
+                new_loan_amount=data['new_loan_amount'],
+                new_amortization_type=data['new_amortization_type'],
+                new_frequency=data['new_frequency'],
+                new_downpayment_percent=data['new_downpayment_percent']
+            )
+            
+            # Update UI
+            self.update_loan_listbox()
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to update loan: {str(e)}"
+            )
+            raise
 
 class ConsolidateLoansDialog(FluentDialog):
     def __init__(self, loans, parent=None):
