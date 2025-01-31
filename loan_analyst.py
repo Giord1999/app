@@ -22,6 +22,7 @@ class DbManager:
         self.port = port
 
     def connect(self):
+        print(f"DEBUG: Connessione a DB {self.dbname} su {self.host}:{self.port} con utente {self.user}")  # <-- Stampa dettagli
         return psycopg2.connect(
             dbname=self.dbname,
             user=self.user,
@@ -49,7 +50,7 @@ class DbManager:
             with conn.cursor() as cursor:
                 cursor.execute('''CREATE TABLE IF NOT EXISTS loans(
                     loan_id UUID PRIMARY KEY,
-                    initial_rate DECIMAL(5,2) NOT NULL,
+                    initial_rate DECIMAL(5,6) NOT NULL,
                     initial_term INTEGER NOT NULL,
                     loan_amount DECIMAL(15,2) NOT NULL,
                     amortization_type VARCHAR(20) NOT NULL CHECK (amortization_type IN ('French', 'Italian')),
@@ -215,22 +216,20 @@ class DbManager:
             return False
 
     def load_all_loans_from_db(self):
-        """Load all loans from database"""
-        try:
-            query = """
-            SELECT loan_id, initial_rate, initial_term, loan_amount, 
-                amortization_type, frequency, rate_type, use_euribor,
-                update_frequency, downpayment_percent, start_date, active
-            FROM loans 
-            WHERE active = true
-            ORDER BY start_date DESC
-            """
-            cursor = self.execute_db_query(query)
-            return cursor.fetchall()
-        except Exception as e:
-            print(f"Database error: {str(e)}")
-            return []
-        
+        """Carica tutti i prestiti senza filtrarli per active=True."""
+        query = """
+        SELECT loan_id, initial_rate, initial_term, loan_amount, 
+            amortization_type, frequency, rate_type, use_euribor,
+            update_frequency, downpayment_percent, start_date, active
+        FROM loans 
+        ORDER BY start_date DESC
+        """
+        cursor = self.execute_db_query(query)
+        loans = cursor.fetchall()
+        print(f"DEBUG: Prestiti trovati nel DB: {loans}")  # <-- Controlla se i dati esistono
+        return loans
+
+
     def load_additional_costs(self, loan_id):
         """Load additional costs for a loan"""
         query = "SELECT description, amount FROM additional_costs WHERE loan_id = %s"
@@ -666,6 +665,40 @@ class Loan:
 
         for idx, loan in enumerate(cls.loans):
             print(f"{idx + 1}: Loan ID: {loan.loan_id}, Amount: €{loan.loan_amount:,.2f}, Rate: {loan.initial_rate * 100:.2f}%, Term: {loan.initial_term} years")
+
+
+    @classmethod
+    def delete_loan(cls, loan_id):
+        """
+        Delete a loan by ID from both database and memory.
+        
+        Args:
+            loan_id: UUID of the loan to delete
+        
+        Returns:
+            bool: True if deletion successful, False otherwise
+        """
+        try:
+            # Find loan in memory list
+            loan_to_delete = next((loan for loan in cls.loans if loan.loan_id == loan_id), None)
+            
+            if loan_to_delete is None:
+                print(f"Loan with ID {loan_id} not found in memory")
+                return False
+                
+            # Delete from database using the loan's db_manager
+            if loan_to_delete.db_manager:
+                loan_to_delete.db_manager.delete_loan(loan_id)
+                
+            # Remove from memory list
+            cls.loans.remove(loan_to_delete)
+            
+            print(f"Successfully deleted loan {loan_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error deleting loan: {str(e)}")
+            return False
 
 
     @classmethod
