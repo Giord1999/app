@@ -5,14 +5,18 @@ import pandas as pd
 import datetime as dt
 from dateutil.relativedelta import relativedelta
 import matplotlib.pyplot as plt
-import os
 import seaborn as sns
 import uuid
 import psycopg2
-from scipy.optimize import brentq, differential_evolution
+from scipy.optimize import brentq
 from ecbdata import ecbdata
 
-#TODO: rendere i parametri "interest_rates", "loan_lives" e "default_probabilities" della funzione def calculate_probabilistic_pricing user defined
+
+#TODO:implementare i tassi variabili ---> PRIORITY #1
+#TODO: attualmente, nel probabilistic pricing, il default segue una traiettoria deterministica. Sarebbe più corretto utilizzare una variabile aleatoria (es.: un processo di Markov a stati discreti) o distribuzione di probabilità per il default (es.: distribuzione di Poisson--> problema: dopo vanno stimati i parametri, a meno che non vogliamo che tali parametri siano definiti dall'utente)
+#TODO: attenzione perché bisogna tenere conto di Basilea III quando si parla del rischio
+
+
 
 class DbManager:
     def __init__(self, dbname, user, password, host='localhost', port='5432'):
@@ -32,12 +36,6 @@ class DbManager:
             port=self.port
         )
 
-    def execute_db_query(self, query, parameters=()):
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, parameters)
-            conn.commit()
-            return cursor
 
     def execute_db_query(self, query, parameters=()):
         with self.connect() as conn:
@@ -185,9 +183,21 @@ class DbManager:
                 raise
             
 
+
     def delete_loan(self, loan_id):
-        query = 'DELETE FROM loans WHERE loan_id = %s'
-        self.execute_db_query(query, (loan_id,))
+        try:
+            # Prima elimina i record correlati in additional_costs
+            delete_costs_query = "DELETE FROM additional_costs WHERE loan_id = %s"
+            self.execute_db_query(delete_costs_query, (loan_id,))
+            
+            # Poi elimina il prestito
+            delete_loan_query = "DELETE FROM loans WHERE loan_id = %s"
+            self.execute_db_query(delete_loan_query, (loan_id,))
+            
+            return True
+        except Exception as e:
+            print(f"Error deleting loan: {e}")
+            return False
 
     def update_loan(self, loan):
         query = '''
@@ -713,22 +723,12 @@ class Loan:
             loan = cls.loans[loan_idx]
             confirm = input(f"Are you sure you want to delete the loan with ID {loan.loan_id}? (yes/no): ").strip().lower()
             if confirm == 'yes':
-                cls.delete_loan(loan_idx)
+                # Modifica qui: passa loan.loan_id invece di loan_idx
+                cls.delete_loan(loan.loan_id)  # <-- Correzione
             else:
                 print("Deletion cancelled.")
         else:
             print("Invalid loan number.")
-
-    @classmethod
-    def set_db_directory(cls, directory):
-        """
-        Set the directory where the database will be saved.
-        """
-        if os.path.isdir(directory):
-            cls.db_directory = directory
-            print(f"Database directory set to: {directory}")
-        else:
-            print(f"Invalid directory: {directory}")
 
     @classmethod
     def consolidate_loans(cls, selected_loans, frequency):
