@@ -313,13 +313,34 @@ class Loan:
             raise
 
     def delete_from_db(self):
-        """Elimina il prestito dal database."""
-        if self.db_manager:
-            self.db_manager.delete_loan(self.loan_id)
-            Loan.loans.remove(self)
-        else:
-            print("Errore: Nessun database manager associato a Loan!")
+        """Elimina il prestito dal database e dalla memoria."""
+        try:
+            if self.db_manager:
+                # First delete related records
+                tables = [
+                    "amortization_schedule",
+                    "additional_costs",
+                    "periodic_expenses"
+                ]
+                
+                for table in tables:
+                    query = f"DELETE FROM {table} WHERE loan_id = %s"
+                    self.db_manager.execute_db_query(query, (self.loan_id,))
 
+                # Then delete the loan itself
+                if self.db_manager.delete_loan(self.loan_id):
+                    if self in Loan.loans:
+                        Loan.loans.remove(self)
+                    return True
+                else:
+                    raise Exception("Failed to delete loan from database")
+            else:
+                raise Exception("No database manager associated with this loan")
+                
+        except Exception as e:
+            print(f"Error deleting loan: {str(e)}")
+            return False
+    
     def update_db(self):
         """Aggiorna i dati del prestito nel database."""
         if self.db_manager:
