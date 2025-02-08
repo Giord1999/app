@@ -26,13 +26,28 @@ from loan import Loan, DbManager
 
 
 def resource_path(relative_path):
-    """Ottiene il percorso assoluto delle risorse"""
+    """Ottiene il percorso assoluto delle risorse, sia in modalità development che in eseguibile"""
     try:
+        # PyInstaller crea una cartella temporanea e memorizza il percorso in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, 'assets', relative_path)
-
+        # Se non siamo in un bundle PyInstaller, usa il percorso corrente
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    # Costruisci il percorso completo considerando la sottocartella assets
+    full_path = os.path.join(base_path, 'assets', relative_path)
+    
+    # Verifica se il file esiste
+    if not os.path.exists(full_path):
+        print(f"WARN: Resource not found: {full_path}")
+        # Prova a cercare direttamente nella cartella assets accanto all'eseguibile
+        alternative_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', relative_path)
+        if os.path.exists(alternative_path):
+            return alternative_path
+        else:
+            print(f"ERROR: Resource not found in alternative path: {alternative_path}")
+    
+    return full_path
 
 class LoanCommand:
     def __init__(self, do_action, undo_action, description):
@@ -588,7 +603,7 @@ class LoginDialog(QDialog):
     """ Apre la finestra di login """
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Login Database")
+        self.setWindowTitle("LoanManager Pro - Login")
         
         # Icona e dimensioni della finestra
         self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
@@ -662,7 +677,7 @@ class LoginDialog(QDialog):
         except psycopg2.Error as e:
             QMessageBox.critical(self, "Errore di Connessione", f"Errore durante la connessione: {e}")
             self.db_params = None
-
+ 
     def get_db_params(self):
         return self.db_params
 
@@ -1370,7 +1385,7 @@ class LoanApp(QMainWindow):
         taeg_btn = AdaptiveRibbonButton("TAEG", resource_path("taeg.png"))
         taeg_btn.clicked.connect(self.open_taeg_dialog)
 
-        prob_pricing_btn = AdaptiveRibbonButton("Probabilistic Pricing", resource_path("probability.png"))
+        prob_pricing_btn = AdaptiveRibbonButton("Probabilistic Pricing", resource_path("pricing.png"))
         prob_pricing_btn.clicked.connect(self.open_probabilistic_pricing)
         analysis_group.add_button(prob_pricing_btn)
         tools_group.add_button(compare_btn)
@@ -1591,7 +1606,7 @@ class LoanApp(QMainWindow):
                 )
                 print(f"Error creating loan: {str(e)}")
                             
-    def delete_loan(self):
+    def delete_loan(self, loan_id):
         if not self.selected_loan:
             QMessageBox.warning(self, "Error", "Please select a loan first")
             return
@@ -1605,16 +1620,20 @@ class LoanApp(QMainWindow):
         
         if reply == QMessageBox.Yes:
             try:
-                # Rimuovi il prestito dal database
-                DbManager.delete_loan(self.loans.index(self.selected_loan))
-                # Rimuovi il prestito dalla lista in memoria
+                # Get the loan_id from selected loan
+                loan_id = self.selected_loan.loan_id
+                # Use the db_manager instance method to delete
+                self.selected_loan.delete_from_db()
+                # Remove from loans list
                 self.loans.remove(self.selected_loan)
                 self.selected_loan = None
                 self.update_loan_listbox()
                 QMessageBox.information(self, "Success", "Loan deleted successfully")
             except Exception as e:
-                QMessageBox.warning(self, "Error", f"Error deleting loan: {str(e)}")
-
+                QMessageBox.critical(self, "Error", f"Failed to delete loan: {str(e)}")
+                print(f"Error deleting loan: {str(e)}")
+                
+                            
     def update_loan_listbox(self):
         self.loan_listbox.clear()
         for i, loan in enumerate(self.loans, 1):
@@ -1963,6 +1982,8 @@ class ProbabilisticPricingDialog(FluentDialog):
         self.setMinimumHeight(600)
         self.setup_ui()
         self.apply_styles()
+
+
         
     def setup_ui(self):
         main_widget = QWidget()
@@ -1989,7 +2010,7 @@ class ProbabilisticPricingDialog(FluentDialog):
         self.default_decay = self.create_double_spinbox(0.9)
         self.final_default = self.create_double_spinbox(0.4)
         self.recovery_rate = self.create_double_spinbox(0.4)
-        self.iterations = self.create_spinbox(100, 10, 1000)
+        self.iterations = self.create_spinbox(100, 10, 100000)
         
         # Add tooltips
         self.initial_default.setToolTip("Initial probability of default (0-1)")
@@ -2032,11 +2053,22 @@ class ProbabilisticPricingDialog(FluentDialog):
         # Assemble layout
         main_layout.addWidget(params_group)
         main_layout.addWidget(self.results_view)
-        main_layout.addLayout(button_layout)
+        main_layout.addLayout(button_layout) 
         
         self.setLayout(QVBoxLayout())
         self.layout().addWidget(scroll)
     
+    def clear_layout(self):
+        """Rimuove tutti i widget dal layout"""
+        while self.main_layout.count():
+            item = self.main_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+    def show_results(self, data):
+        # Pulisci il layout esistente
+        self.clear_layout()
+        
     def create_double_spinbox(self, default_value):
         spinbox = QDoubleSpinBox()
         spinbox.setRange(0, 1)
@@ -2135,33 +2167,40 @@ class ProbabilisticPricingDialog(FluentDialog):
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to calculate pricing: {str(e)}")
+
+
             
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
-    # Carica il font Source Sans Pro
+    # Carica i font
     font_files = [
-        resource_path("SourceSansPro-Regular.ttf"),
-        resource_path("SourceSansPro-Bold.ttf"),
-        resource_path("SourceSansPro-Italic.ttf"),
+        os.path.join(os.path.dirname(__file__), 'fonts', 'SourceSansPro-Regular.ttf'),
+        os.path.join(os.path.dirname(__file__), 'fonts', 'SourceSansPro-Bold.ttf'),
+        os.path.join(os.path.dirname(__file__), 'fonts', 'SourceSansPro-Italic.ttf'),
     ]
 
+    # Carica i font e imposta il font di default
+    loaded_font_family = None
     for font_file in font_files:
-        font_id = QFontDatabase.addApplicationFont(font_file)
-        if font_id == -1:
-            print(f"Errore nel caricamento del font: {font_file}")
+        if os.path.exists(font_file):
+            font_id = QFontDatabase.addApplicationFont(font_file)
+            if font_id != -1:
+                font_families = QFontDatabase.applicationFontFamilies(font_id)
+                if font_families:
+                    loaded_font_family = font_families[0]
+                    print(f"Font caricato con successo: {loaded_font_family}")
+                    break
 
-    # Ottieni il nome della famiglia del font caricato
-    font_families = QFontDatabase.applicationFontFamilies(font_id)
-    if font_families:
-        font_family = font_families[0]
+    # Imposta il font di default per tutta l'applicazione
+    if loaded_font_family:
+        default_font = QFont(loaded_font_family, 10)  # Puoi modificare la dimensione (10) come preferisci
+        app.setFont(default_font)
+        print(f"Font predefinito impostato: {loaded_font_family}")
     else:
-        font_family = "Source Sans Pro"  # Come fallback
+        print("Usando font di sistema come fallback")
 
-    # Imposta il font per l'applicazione
-    font = QFont(font_family, 11)
-    app.setFont(font)
-
+        
     # Mostra la finestra di login
     login_dialog = LoginDialog()
     if login_dialog.exec_() == QDialog.Accepted:
@@ -2176,14 +2215,22 @@ if __name__ == "__main__":
         # Crea le tabelle necessarie nel database
         db_manager.create_db()
 
-        # Create and show splash screen
-        splash_pix = QPixmap(resource_path('loan_splashcreen.png'))
-        splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
-        splash.setMask(splash_pix.mask())
-        splash.show()
-        
+        # Nel main()
+        try:
+            # Percorso assoluto per debug
+            splash_path = os.path.join(os.path.dirname(__file__), 'assets', 'loan_splashscreen.png')
+            splash_pix = QPixmap(splash_path)
+            if splash_pix.isNull():
+                print(f"Errore: Impossibile caricare lo splash screen da {splash_path}")
+            else:
+                splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
+                splash.setMask(splash_pix.mask())
+                splash.show()
+        except Exception as e:
+            print(f"Errore nel caricamento dello splash screen: {e}")
+
         # Simulate some loading time
-        time.sleep(2)
+        time.sleep(6)
         
         # Create and show main window
         main_window = LoanApp(db_manager)
