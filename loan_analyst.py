@@ -12,9 +12,8 @@ from scipy.optimize import brentq
 from ecbdata import ecbdata
 
 
-#TODO:implementare i tassi variabili ---> PRIORITY #1
-#TODO: attualmente, nel probabilistic pricing, il default segue una traiettoria deterministica. Sarebbe più corretto utilizzare una variabile aleatoria (es.: un processo di Markov a stati discreti) o distribuzione di probabilità per il default (es.: distribuzione di Poisson--> problema: dopo vanno stimati i parametri, a meno che non vogliamo che tali parametri siano definiti dall'utente)
-#TODO: attenzione perché bisogna tenere conto di Basilea III quando si parla del rischio
+#TODO:implementare i tassi variabili ---> PRIORITY #1. L'idea potrebbe essere quello di integrare un job schedulato che aggiorna periodicamente il tasso di interesse per i prestiti variabili, aggiungendo uno spread
+#TODO: attualmente, nel probabilistic pricing, il default segue una traiettoria deterministica. Sarebbe più corretto utilizzare una variabile aleatoria o distribuzione di probabilità per il default. Attenzione perché bisogna tenere conto di Basilea III quando si parla del rischio. ---> PRIORITY #2
 
 
 
@@ -25,7 +24,7 @@ class DbManager:
         self.password = password
         self.host = host
         self.port = port
-
+ 
     def connect(self):
         print(f"DEBUG: Connessione a DB {self.dbname} su {self.host}:{self.port} con utente {self.user}")  # <-- Stampa dettagli
         return psycopg2.connect(
@@ -281,7 +280,7 @@ class Loan:
         self.taeg = {}
         self.table = self.loan_table()
         self.active = False
-        self.db_manager = db_manager  # Asso
+        self.db_manager = db_manager 
 
         # Add to loans list
         if self not in Loan.loans:
@@ -435,11 +434,14 @@ class Loan:
             raise ValueError("Unsupported frequency")
 
         if self.amortization_type == "French":
-            interest = [npf.ipmt(self.rate, month, self.periods, -self.loan_amount, when="end")
+            interest = [npf.ipmt(self.rate, month, self.periods, -self.loan_amount)
                         for month in range(1, self.periods + 1)]
+        
             principal = [npf.ppmt(self.rate, month, self.periods, -self.loan_amount)
                         for month in range(1, self.periods + 1)]
+            
             balance = [self.loan_amount - sum(principal[:x]) for x in range(1, self.periods + 1)]
+
             table = pd.DataFrame({
                 'Initial Debt': [self.loan_amount] + balance[:-1],
                 'Payment': [self.pmt] * self.periods,
