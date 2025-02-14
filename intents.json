@@ -1,0 +1,301 @@
+{
+    "intents": [
+        
+        {
+            "tag": "greeting",
+            "patterns": [
+                "Ciao",
+                "Buongiorno",
+                "Buonasera",
+                "Salve",
+                "Bentrovato",
+                "Come va?",
+                "Come stai?",
+                "Ci sei?"
+            ],
+            
+            "responses": [
+                "Ciao! Come posso aiutarti con i tuoi prestiti?",
+                "Salve! Sono qui per aiutarti a gestire i tuoi prestiti",
+                "Buongiorno! In cosa posso esserti utile oggi?"
+            ]
+        },
+
+        {
+            "tag": "goodbye",
+
+            "patterns": [
+                "Arrivederci",
+                "Ciao ciao",
+                "A presto",
+                "Grazie e buona giornata",
+                "Ci vediamo presto"
+            ],
+            "responses": [
+                "Arrivederci! Non esitare a tornare se hai bisogno di aiuto",
+                "Buona giornata! Sono qui se hai altre domande",
+                "A presto! Sarò qui per aiutarti con i tuoi prestiti"
+            ]
+        },
+
+        {
+            "tag": "thanks",
+            "patterns": [
+                "Grazie",
+                "Grazie mille",
+                "Ti ringrazio",
+                "Molto gentile",
+                "Apprezzo il tuo aiuto"
+            ],
+            "responses": [
+                "Di niente! Sono qui per questo",
+                "È un piacere poterti aiutare",
+                "Non c'è di che! Fammi sapere se hai altre domande"
+            ]
+        },
+
+        {
+            "tag": "create_loan",
+            "patterns": [
+                "Crea un nuovo prestito",
+                "Aggiungi un prestito",
+                "Voglio fare un prestito",
+                "Ho bisogno di un nuovo finanziamento",
+                "Vorrei richiedere un prestito",
+                "Come posso aprire un nuovo prestito?",
+                "Inizia una nuova pratica di prestito",
+                "Avvia richiesta prestito"
+            ],
+            "responses": [
+                "Certo! Inserisci i dettagli del nuovo prestito. Se ci sono già prestiti esistenti, verrà creato un nuovo record."
+            ]
+        },
+
+        {
+            "tag": "save_loan",
+            "patterns": [
+                "Salva il prestito",
+                "Memorizza questo prestito",
+                "Registra il prestito nel database",
+                "Voglio salvare i dati del prestito",
+                "Conferma e salva questo finanziamento",
+                "Archivia i dettagli del prestito",
+                "Memorizza questa simulazione"
+            ],
+            "responses": [
+                "Il prestito selezionato è stato salvato con successo nel database."
+            ]
+        },
+
+        {
+            "tag": "delete_loan",
+            "patterns": [
+                "Elimina un prestito",
+                "Cancella un prestito",
+                "Rimuovi un prestito"
+            ],
+            "responses": [
+                "Seleziona il prestito da eliminare. Inserisci l'ID o l'indice del prestito."
+            ]
+        },
+
+                
+        {
+            "tag": "select_loan",
+            "patterns": [
+                "seleziona prestito",
+                "scegli prestito",
+                "usa prestito",
+                "seleziona il prestito",
+                "cambia prestito",
+                "prestito numero"
+            ],
+            "responses": [
+                "Inserisci l'ID del prestito che vuoi selezionare."
+            ]
+        },
+
+        {
+            "tag": "payment_analysis", 
+            "patterns": [
+                "analizza pagamenti",
+                "analisi pagamenti",
+                "analisi dei pagamenti",
+                "analizza i pagamenti",
+                "payment analysis"
+            ],
+            "responses": [
+                "Eseguo l'analisi dei pagamenti per il prestito selezionato."
+            ]
+        },
+        {
+            "tag": "plot_graph",
+            "patterns": [
+                "Mostra grafico",
+                "Visualizza grafico", 
+                "Genera grafico",
+                "Mostra il grafico",
+                "Mostra il grafico del prestito"
+            ],
+            "responses": [
+                "Genero il grafico per il prestito selezionato."
+            ]
+        },
+     
+
+        {
+            "tag": "update_loan",
+            "patterns": [
+                "Aggiorna un prestito",
+                "Modifica un prestito",
+                "Cambia i dettagli di un prestito"
+            ],
+            "responses": [
+                "Seleziona il prestito da aggiornare, poi fornisci i nuovi dettagli."
+            ]
+        },
+
+        {
+            "tag": "amortization_schedule",
+            "patterns": [
+                "Calcola il piano di ammortamento",
+                "Mostra il piano di pagamento",
+                "Visualizza il piano di ammortamento",
+                "Mostrami il piano di ammortamento"
+            ],
+            
+            "responses": [
+                "Calcolo il piano di ammortamento."
+            ]
+        },
+
+        {
+            "tag": "euribor_rates",
+            "patterns": [
+                "Usa tasso Euribor",
+                "Applica tasso variabile Euribor",
+                "Ottieni i tassi Euribor"
+            ],
+            "responses": [
+                "Seleziona il prestito per cui vuoi applicare il tasso Euribor."
+            ]
+        },
+        
+        {
+            "tag": "consolidate_loans",
+            "patterns": [
+                "Consolida prestiti",
+                "Unisci prestiti",
+                "Fai un consolidamento dei prestiti"
+            ],
+            "responses": [
+                "Seleziona i prestiti da consolidare e indica la frequenza di pagamento desiderata."
+            ]
+        },
+
+        {
+            "tag": "calculate_taeg",
+            "patterns": [
+                "Calcola il TAEG",
+                "Calcola il tasso annuo effettivo globale",
+                "Mostrami il TAEG",
+                "Qual è il TAEG di questo prestito?"
+            ],
+            "responses": [
+                "Calcolo il TAEG."
+            ]
+        },
+
+        {
+            "tag": "plot_graph",
+            "patterns": [
+                "Mostra grafico",
+                "Visualizza grafico",
+                "Genera grafico",
+                "Mostra il grafico",
+                "Mostra il grafico del prestito"
+            ],
+            "responses": [
+                "Genero il grafico per il prestito selezionato."
+            ]
+        },
+
+        {
+            "tag": "select_loan",
+            "patterns": [
+                "Seleziona un prestito",
+                "Scegli un prestito",
+                "Quale prestito?"
+            ],
+            "responses": [
+                "Inserisci l'ID del prestito su cui operare."
+            ]
+        },
+
+        {
+            "tag": "payment_analysis",
+            "patterns": [
+                "Analisi dei pagamenti",
+                "Cosa succede se aggiungo un pagamento extra?",
+                "Mostra l'effetto di un pagamento aggiuntivo",
+                "Calcola l'impatto di un pagamento extra",
+                "Come cambia il prestito se aggiungo un pagamento extra?",
+                "Cosa succede se voglio estinguere il prestito prima?",
+                "Calcola l'effetto di un pagamento anticipato",
+                "Mostra l'impatto di un pagamento anticipato",
+                "Come cambia il prestito se estinguo il debito prima?"
+            ],
+
+            "responses": [
+                "Eseguo l'analisi dei pagamenti."
+            ]
+        },
+
+        {
+            "tag": "pricing_analysis",
+            "patterns": [
+                "Fai un'analisi di pricing",
+                "Calcola il pricing probabilistico",
+                "Esegui una simulazione Monte Carlo"
+            ],
+            "responses": [
+                "Eseguo l'analisi di pricing probabilistico."
+            ]
+        },
+
+        {
+            "tag": "compare_loans",
+            "patterns": [
+                "Confronta prestiti",
+                "Fai un confronto tra prestiti",
+                "Qual è il prestito migliore?"
+            ],
+            "responses": [
+                "Seleziona i prestiti da confrontare (puoi indicare più indici separati da una virgola)."
+            ]
+        },
+
+        {
+            "tag": "display_loans",
+            "patterns": [
+                "Visualizza tutti i prestiti",
+                "Mostrami i prestiti",
+                "Elenca i prestiti salvati"
+            ],
+            "responses": [
+                "Ecco la lista dei prestiti salvati nel database."
+            ]
+        },
+        {
+            "tag": "select_loan",
+            "patterns": [
+                "Seleziona un prestito",
+                "Scegli un prestito",
+                "Quale prestito?"
+            ],
+            "responses": [
+                "Inserisci l'indice o l'ID del prestito su cui operare."
+            ]
+        }
+    ]
+}
