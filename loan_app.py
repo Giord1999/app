@@ -11,8 +11,11 @@ from PyQt5.QtCore import Qt, QSize
 import sys
 import os
 import time
+
 import matplotlib
 import numpy as np
+
+# Set the backend for matplotlib
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -20,6 +23,9 @@ from matplotlib.figure import Figure
 import pandas as pd
 import psycopg2
 from loan import Loan, DbManager
+
+
+from ai_chatbot_loan import Chatbot
 
 
 #TODO: implementare i tassi variabili
@@ -50,6 +56,7 @@ def resource_path(relative_path):
     return full_path
 
 class LoanCommand:
+    """"Classe per la gestione degli undo e redo delle operazioni"""
     def __init__(self, do_action, undo_action, description):
         self.do_action = do_action
         self.undo_action = undo_action
@@ -62,6 +69,7 @@ class LoanCommand:
         self.undo_action()
 
 class FluentStylesheet:
+    """Classe per la gestione degli stili CSS"""
     @staticmethod
     def get_base_stylesheet():
         return """
@@ -185,6 +193,7 @@ class FluentStylesheet:
 
 
 class ThemeManager:
+    """Classe per la gestione dei temi"""
     def __init__(self):
         self.current_theme = "light"
         self._themes = {
@@ -351,15 +360,19 @@ class ThemeManager:
         }
 
     def get_stylesheet(self, theme_name=None):
+        """Restituisce il foglio di stile per il tema corrente"""
         theme = theme_name or self.current_theme
         theme_dict = self._themes[theme]
         return "\n".join(theme_dict.values())
 
     def toggle_theme(self):
+        
+        """Cambia il tema corrente tra chiaro e scuro"""
         self.current_theme = "dark" if self.current_theme == "light" else "light"
         return self.get_stylesheet()
 
     def get_current_theme(self):
+        """Restituisce il nome del tema corrente"""
         return self.current_theme
 
     def apply_theme_to_widget(self, widget, widget_type):
@@ -369,6 +382,7 @@ class ThemeManager:
             widget.setStyleSheet(theme[widget_type])
 
 class CollapsibleRibbonGroup(QWidget):
+    """Classe per la gestione dei gruppi espandibili"""
     def __init__(self, title, parent=None):
         super().__init__(parent)
         self.title = title
@@ -431,6 +445,7 @@ class CollapsibleRibbonGroup(QWidget):
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
 
     def toggle_content(self):
+        
         self.is_expanded = not self.is_expanded
         self.content.setVisible(self.is_expanded)
         self.toggle_button.setArrowType(Qt.DownArrow if self.is_expanded else Qt.RightArrow)
@@ -1391,12 +1406,22 @@ class LoanApp(QMainWindow):
         tools_group.add_button(compare_btn)
         tools_group.add_button(consolidate_btn)
         tools_group.add_button(taeg_btn)
-        
+
+        # AI Assistant Group
+        ai_group = CollapsibleRibbonGroup("AI Assistant")
+        assistant_btn = AdaptiveRibbonButton(
+            "AI Assistant",
+            resource_path("chatbot_icon.png")
+        )
+        assistant_btn.clicked.connect(self.open_ai_assistant)
+        ai_group.add_button(assistant_btn)
+            
 
         # Add groups to ribbon tab
         ribbon_tab.add_group(loan_group)
         ribbon_tab.add_group(analysis_group)
         ribbon_tab.add_group(tools_group)
+        ribbon_tab.add_group(ai_group) 
 
         ribbon_layout.addWidget(ribbon_tab)
         self.main_layout.addWidget(ribbon_widget)
@@ -1736,6 +1761,12 @@ class LoanApp(QMainWindow):
         dialog.exec_()
 
 
+    def open_ai_assistant(self):
+        """Opens the AI assistant dialog"""
+        dialog = ChatAssistantDialog(self)
+        dialog.exec_()
+
+
     def setup_shortcuts(self):
         """Configura le scorciatoie da tastiera per do/undo"""
         from PyQt5.QtGui import QKeySequence
@@ -1909,6 +1940,25 @@ class LoanApp(QMainWindow):
                 f"Failed to update loan: {str(e)}"
             )
             raise
+        # Initialize chatbot
+
+        self.chatbot = Chatbot("intents.json")
+        
+    def display_loans(self):
+        """Returns a formatted string of all loans for the chatbot"""
+        if not self.loans:
+            return "No loans found."
+            
+        loans_info = ["Current Loans:"]
+        for loan in self.loans:
+            loans_info.append(
+                f"\nLoan ID: {loan.loan_id}"
+                f"\nAmount: €{loan.loan_amount:,.2f}"
+                f"\nRate: {loan.initial_rate * 100:.2f}%"
+                f"\nType: {loan.amortization_type}"
+                f"\n---"
+            )
+        return "\n".join(loans_info)
 
 class ConsolidateLoansDialog(FluentDialog):
     def __init__(self, loans, parent=None):
@@ -2168,7 +2218,140 @@ class ProbabilisticPricingDialog(FluentDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to calculate pricing: {str(e)}")
 
-
+class ChatAssistantDialog(FluentDialog):
+    def __init__(self, loan_app, parent=None):
+        super().__init__("LoanManager AI Assistant", parent)
+        self.loan_app = loan_app
+        # Use resource_path to locate intents.json
+        intents_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'intents.json')
+        self.chatbot = Chatbot(intents_file)
+        self.setup_ui()
+        self.setup_styles()
+        
+    def setup_ui(self):
+        # Set dialog size
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+        
+        # Create main layout widgets
+        chat_container = QWidget()
+        chat_layout = QVBoxLayout(chat_container)
+        
+        # Chat history
+        self.chat_history = QTextEdit()
+        self.chat_history.setReadOnly(True)
+        
+        # Message input area
+        input_container = QWidget()
+        input_layout = QHBoxLayout(input_container)
+        
+        self.message_input = QLineEdit()
+        self.message_input.setPlaceholderText("Type your message here...")
+        self.message_input.returnPressed.connect(self.send_message)
+        
+        send_button = QPushButton("Send")
+        send_button.clicked.connect(self.send_message)
+        
+        input_layout.addWidget(self.message_input)
+        input_layout.addWidget(send_button)
+        
+        # Add widgets to chat layout
+        chat_layout.addWidget(self.chat_history)
+        chat_layout.addWidget(input_container)
+        
+        # Add chat container to main layout
+        self.main_layout.insertWidget(0, chat_container)
+        
+        # Display welcome message
+        self.append_message("Assistant", "Hello! I'm your LoanManager AI Assistant. How can I help you today?")
+    
+    def setup_styles(self):
+        self.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                padding: 10px;
+                background-color: white;
+                font-size: 12pt;
+            }
+            
+            QLineEdit {
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 12pt;
+                min-height: 20px;
+            }
+            
+            QPushButton {
+                background-color: #0078D4;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-size: 12pt;
+            }
+            
+            QPushButton:hover {
+                background-color: #106EBE;
+            }
+        """)
+    
+    def send_message(self):
+        user_message = self.message_input.text().strip()
+        if not user_message:
+            return
+            
+        # Display user message
+        self.append_message("User", user_message)
+        self.message_input.clear()
+        
+        # Get chatbot response and execute corresponding action
+        intent = self.chatbot.get_intent(user_message)
+        
+        try:
+            if intent in self.chatbot.intent_methods:
+                # Map intents to app actions
+                intent_actions = {
+                    "create_loan": self.loan_app.new_loan,
+                    "delete_loan": lambda: self.loan_app.delete_loan(None),
+                    "update_loan": self.loan_app.edit_loan,
+                    "amortization_schedule": self.loan_app.amort,
+                    "display_loans": lambda: self.append_message("Assistant", self.loan_app.display_loans()),
+                    "compare_loans": self.loan_app.compare_loans,
+                    "consolidate_loans": self.loan_app.consolidate_loans,
+                    "calculate_taeg": self.loan_app.open_taeg_dialog,
+                    "pricing_analysis": self.loan_app.open_probabilistic_pricing,
+                }
+                
+                if intent in intent_actions:
+                    intent_actions[intent]()
+                    self.append_message("Assistant", "Action completed successfully!")
+                else:
+                    response = self.chatbot.intent_methods[intent]()
+                    self.append_message("Assistant", response)
+            else:
+                self.append_message("Assistant", "I'm sorry, I don't understand that request.")
+                
+        except Exception as e:
+            self.append_message("Assistant", f"Sorry, an error occurred: {str(e)}")
+    
+    def append_message(self, sender, message):
+        cursor = self.chat_history.textCursor()
+        cursor.movePosition(cursor.End)
+        
+        # Format message based on sender
+        if sender == "User":
+            html = f'<p style="margin-top:10px;"><b style="color:#0078D4">{sender}:</b> {message}</p>'
+        else:
+            html = f'<p style="margin-top:10px;"><b style="color:#107C10">{sender}:</b> {message}</p>'
+            
+        cursor.insertHtml(html)
+        
+        # Scroll to bottom
+        self.chat_history.verticalScrollBar().setValue(
+            self.chat_history.verticalScrollBar().maximum()
+        )
             
 if __name__ == "__main__":
     app = QApplication(sys.argv)
