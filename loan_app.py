@@ -3,11 +3,11 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QSizePolicy, QScrollArea, QAction, QTabWidget)
+                             QToolButton, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame)
 
 
-from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPainterPath, QColor, QFont, QFontMetrics
+from PyQt5.QtCore import Qt, QSize, QTimer,  QRectF, QPointF
 import sys
 import os
 import time
@@ -2033,7 +2033,6 @@ class ProbabilisticPricingDialog(FluentDialog):
         self.setup_ui()
         self.apply_styles()
 
-
         
     def setup_ui(self):
         main_widget = QWidget()
@@ -2218,141 +2217,381 @@ class ProbabilisticPricingDialog(FluentDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to calculate pricing: {str(e)}")
 
+
+
 class ChatAssistantDialog(FluentDialog):
     def __init__(self, loan_app, parent=None):
         super().__init__("LoanManager AI Assistant", parent)
         self.loan_app = loan_app
-        # Use resource_path to locate intents.json
         intents_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'intents.json')
         self.chatbot = Chatbot(intents_file)
         self.setup_ui()
         self.setup_styles()
         
     def setup_ui(self):
-        # Set dialog size
-        self.setMinimumWidth(800)
-        self.setMinimumHeight(600)
+        # Set dialog size and background
+        self.setMinimumWidth(900)
+        self.setMinimumHeight(700)
         
-        # Create main layout widgets
+        # Main chat container
         chat_container = QWidget()
         chat_layout = QVBoxLayout(chat_container)
+        chat_layout.setSpacing(0)
+        chat_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Chat history
+        # Header
+        header = QWidget()
+        header.setObjectName("chatHeader")
+        header_layout = QHBoxLayout(header)
+        
+        # Assistant avatar
+        avatar_label = QLabel()
+        avatar_pixmap = QPixmap(resource_path("chatbot_icon.png")).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        avatar_label.setPixmap(avatar_pixmap)
+        
+        # Assistant name and status
+        name_status = QVBoxLayout()
+        name_label = QLabel("LoanManager Assistant")
+        name_label.setObjectName("assistantName")
+        status_label = QLabel("Online")
+        status_label.setObjectName("assistantStatus")
+        name_status.addWidget(name_label)
+        name_status.addWidget(status_label)
+        
+        header_layout.addWidget(avatar_label)
+        header_layout.addLayout(name_status)
+        header_layout.addStretch()
+        
+        # Chat history area with custom background
+        chat_bg = QWidget()
+        chat_bg.setObjectName("chatBackground")
+        chat_bg_layout = QVBoxLayout(chat_bg)
+        
         self.chat_history = QTextEdit()
         self.chat_history.setReadOnly(True)
+        self.chat_history.setObjectName("chatHistory")
+        self.chat_history.setFrameShape(QFrame.NoFrame)
+        chat_bg_layout.addWidget(self.chat_history)
         
         # Message input area
         input_container = QWidget()
+        input_container.setObjectName("inputContainer")
         input_layout = QHBoxLayout(input_container)
+        input_layout.setContentsMargins(15, 15, 15, 15)
         
         self.message_input = QLineEdit()
-        self.message_input.setPlaceholderText("Type your message here...")
+        self.message_input.setPlaceholderText("Type a message...")
+        self.message_input.setObjectName("messageInput")
         self.message_input.returnPressed.connect(self.send_message)
         
-        send_button = QPushButton("Send")
+        send_button = QPushButton()
+        send_button.setObjectName("sendButton")
+        send_button.setIcon(QIcon(resource_path("send_icon.png")))
+        send_button.setIconSize(QSize(20, 20))
         send_button.clicked.connect(self.send_message)
         
         input_layout.addWidget(self.message_input)
         input_layout.addWidget(send_button)
         
-        # Add widgets to chat layout
-        chat_layout.addWidget(self.chat_history)
+        # Add all components to main layout
+        chat_layout.addWidget(header)
+        chat_layout.addWidget(chat_bg)
         chat_layout.addWidget(input_container)
         
-        # Add chat container to main layout
         self.main_layout.insertWidget(0, chat_container)
         
-        # Display welcome message
-        self.append_message("Assistant", "Hello! I'm your LoanManager AI Assistant. How can I help you today?")
+        # Welcome message with typing animation
+        QTimer.singleShot(500, lambda: self.animate_typing(
+            "Assistant", 
+            "Hello! I'm your LoanManager AI Assistant. How can I help you today? 👋"
+        ))
     
     def setup_styles(self):
         self.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid #e0e0e0;
-                border-radius: 4px;
-                padding: 10px;
-                background-color: white;
-                font-size: 12pt;
+            QDialog {
+                background-color: #ffffff;
             }
             
-            QLineEdit {
-                border: 1px solid #e0e0e0;
-                border-radius: 4px;
-                padding: 8px;
-                font-size: 12pt;
-                min-height: 20px;
+            #chatHeader {
+                background-color: #f8f9fa;
+                border-bottom: 1px solid #e9ecef;
+                padding: 15px;
+                min-height: 60px;
             }
             
-            QPushButton {
-                background-color: #0078D4;
-                color: white;
+            #assistantName {
+                color: #212529;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            
+            #assistantStatus {
+                color: #28a745;
+                font-size: 12px;
+            }
+            
+            #chatBackground {
+                background-color: #f8f9fa;
+            }
+            
+            #chatHistory {
+                background-color: transparent;
                 border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-size: 12pt;
+                padding: 20px;
+                font-size: 14px;
             }
             
-            QPushButton:hover {
+            #inputContainer {
+                background-color: #ffffff;
+                border-top: 1px solid #e9ecef;
+            }
+            
+            #messageInput {
+                border: 1px solid #e9ecef;
+                border-radius: 20px;
+                padding: 10px 20px;
+                font-size: 14px;
+                min-height: 40px;
+                background-color: #f8f9fa;
+            }
+            
+            #messageInput:focus {
+                border-color: #0078D4;
+                background-color: #ffffff;
+            }
+            
+            #sendButton {
+                background-color: #0078D4;
+                border-radius: 20px;
+                min-width: 40px;
+                min-height: 40px;
+                margin-left: 10px;
+            }
+            
+            #sendButton:hover {
                 background-color: #106EBE;
             }
+            
+            QScrollBar:vertical {
+                border: none;
+                background-color: #f8f9fa;
+                width: 10px;
+                margin: 0px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background-color: #c1c1c1;
+                min-height: 30px;
+                border-radius: 5px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background-color: #a8a8a8;
+            }
         """)
+    
+    def animate_typing(self, sender, message):
+        """Animates the typing indicator before showing the message"""
+        typing_indicator = "Typing..."
+        self.append_message(sender, typing_indicator, is_typing=True)
+        QTimer.singleShot(1500, lambda: self.replace_last_message(sender, message))
+    
+    def replace_last_message(self, sender, message):
+        """Replaces the last message in chat history"""
+        cursor = self.chat_history.textCursor()
+        cursor.movePosition(cursor.End)
+        cursor.movePosition(cursor.StartOfBlock, cursor.KeepAnchor)
+        cursor.removeSelectedText()
+        self.append_message(sender, message)
     
     def send_message(self):
         user_message = self.message_input.text().strip()
         if not user_message:
             return
-            
+
         # Display user message
         self.append_message("User", user_message)
         self.message_input.clear()
-        
-        # Get chatbot response and execute corresponding action
+
         intent = self.chatbot.get_intent(user_message)
         
         try:
-            if intent in self.chatbot.intent_methods:
-                # Map intents to app actions
-                intent_actions = {
-                    "create_loan": self.loan_app.new_loan,
-                    "delete_loan": lambda: self.loan_app.delete_loan(None),
-                    "update_loan": self.loan_app.edit_loan,
-                    "amortization_schedule": self.loan_app.amort,
-                    "display_loans": lambda: self.append_message("Assistant", self.loan_app.display_loans()),
-                    "compare_loans": self.loan_app.compare_loans,
-                    "consolidate_loans": self.loan_app.consolidate_loans,
-                    "calculate_taeg": self.loan_app.open_taeg_dialog,
-                    "pricing_analysis": self.loan_app.open_probabilistic_pricing,
-                }
-                
-                if intent in intent_actions:
-                    intent_actions[intent]()
-                    self.append_message("Assistant", "Action completed successfully!")
-                else:
-                    response = self.chatbot.intent_methods[intent]()
-                    self.append_message("Assistant", response)
+            # Mappa gli intenti a funzioni specifiche
+            intent_actions = {
+                "greeting": lambda: self.append_message("Assistant", 
+                                    np.random.choice([
+                                        "Ciao! Come posso aiutarti con i tuoi prestiti?",
+                                        "Salve! Sono qui per aiutarti a gestire i tuoi prestiti.",
+                                        "Buongiorno! In cosa posso esserti utile oggi?"
+                                    ])),
+                "goodbye": lambda: self.append_message("Assistant", 
+                                    np.random.choice([
+                                        "Arrivederci! Non esitare a tornare se hai bisogno di aiuto.",
+                                        "A presto! Sarò qui per aiutarti con i tuoi prestiti."
+                                    ])),
+                "thanks": lambda: self.append_message("Assistant", 
+                                    np.random.choice([
+                                        "Di niente! Sono qui per questo.",
+                                        "È un piacere poterti aiutare."
+                                    ])),
+                "create_loan": self.loan_app.new_loan,
+                "delete_loan": lambda: self.loan_app.delete_loan(None),
+                "select_loan": self.loan_app.select_loan,
+                "payment_analysis": self.loan_app.open_payment_analysis,
+                "plot_graph": self.loan_app.plot,
+                "update_loan": self.loan_app.edit_loan,
+                "amortization_schedule": self.loan_app.amort,
+                "consolidate_loans": self.loan_app.consolidate_loans,
+                "calculate_taeg": self.loan_app.open_taeg_dialog,
+                "pricing_analysis": self.loan_app.open_probabilistic_pricing,
+                "compare_loans": self.loan_app.compare_loans,
+                "display_loans": lambda: self.append_message("Assistant", self.loan_app.display_loans()),
+            }
+
+            if intent in intent_actions:
+                intent_actions[intent]()
+                self.append_message("Assistant", "Azione completata con successo!")
             else:
-                self.append_message("Assistant", "I'm sorry, I don't understand that request.")
+                self.append_message("Assistant", "Mi dispiace, non capisco la richiesta.")
                 
         except Exception as e:
             self.append_message("Assistant", f"Sorry, an error occurred: {str(e)}")
-    
-    def append_message(self, sender, message):
+
+    def append_message(self, sender, message, is_typing=False):
         cursor = self.chat_history.textCursor()
         cursor.movePosition(cursor.End)
         
-        # Format message based on sender
         if sender == "User":
-            html = f'<p style="margin-top:10px;"><b style="color:#0078D4">{sender}:</b> {message}</p>'
+            align = "right"
+            text_color = "#FFFFFF"
+            bubble_color = "#0078D4"
+            bubble_hover = "#106EBE"
+            avatar = resource_path("user.png")
         else:
-            html = f'<p style="margin-top:10px;"><b style="color:#107C10">{sender}:</b> {message}</p>'
-            
-        cursor.insertHtml(html)
+            align = "left" 
+            text_color = "#000000"
+            bubble_color = "#F0F0F0"
+            bubble_hover = "#E8E8E8"
+            avatar = resource_path("chatbot_icon.png")
+
+        current_time = time.strftime("%H:%M")
         
-        # Scroll to bottom
+        # Template HTML aggiornato con bordi più arrotondati e stile moderno
+        html = f'''
+            <div style="
+                margin: 12px 0; 
+                text-align: {align};
+                animation: fadeIn 0.3s ease-out;
+            ">
+                <table style="
+                    margin: {'0 0 0 auto' if sender == 'User' else '0 auto 0 0'}; 
+                    max-width: 85%;
+                    border-spacing: 0;
+                ">
+                    <tr>
+                        <td style="
+                            vertical-align: bottom; 
+                            padding: 0 8px;
+                            width: 40px;
+                            {'display: none' if sender == 'User' else ''}
+                        ">
+                            <div style="
+                                width: 35px;
+                                height: 35px;
+                                border-radius: 50%;
+                                background-image: url('{avatar}');
+                                background-size: cover;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                            "></div>
+                        </td>
+                        <td style="padding: 0;">
+                            <div class="message-bubble" style="
+                                position: relative;
+                                display: inline-block;
+                                background-color: {bubble_color};
+                                color: {text_color};
+                                padding: 12px 18px;
+                                border-radius: 24px;
+                                margin: 2px 0;
+                                max-width: 100%;
+                                word-wrap: break-word;
+                                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+                                transition: all 0.2s ease;
+                                {'border-top-right-radius: 8px;' if sender == 'User' else 'border-top-left-radius: 8px;'}
+                            ">
+                                {message}
+                            </div>
+                            <div style="
+                                font-size: 11px;
+                                color: #999;
+                                margin-top: 4px;
+                                padding: 0 4px;
+                                display: flex;
+                                align-items: center;
+                                gap: 4px;
+                                {'justify-content: flex-end;' if sender == 'User' else ''}
+                            ">
+                                <span style="font-weight: 500; color: {'#0078D4' if sender == 'User' else '#666'};">
+                                    {sender}
+                                </span>
+                                <span>·</span>
+                                <span>{current_time}</span>
+                                {'<span style="color: #34D399">✓✓</span>' if sender == 'User' else ''}
+                            </div>
+                        </td>
+                        <td style="
+                            vertical-align: bottom;
+                            padding: 0 8px;
+                            width: 40px;
+                            {'display: none' if sender != 'User' else ''}
+                        ">
+                            <div style="
+                                width: 35px;
+                                height: 35px;
+                                border-radius: 50%;
+                                background-image: url('{avatar}');
+                                background-size: cover;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                            "></div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        '''
+
+        # Stili CSS aggiornati
+        css = '''
+            <style>
+                @keyframes fadeIn {
+                    from { 
+                        opacity: 0; 
+                        transform: translateY(8px);
+                    }
+                    to { 
+                        opacity: 1; 
+                        transform: translateY(0);
+                    }
+                }
+                .message-bubble {
+                    transform-origin: {'right' if sender == 'User' else 'left'};
+                }
+                .message-bubble:hover {
+                    transform: scale(1.02);
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                }
+            </style>
+        '''
+
+        # Combina HTML e CSS
+        content = css + html
+
+        # Inserisci il contenuto nel chat history
+        cursor.insertHtml(content)
+        
+        # Scorri alla fine
         self.chat_history.verticalScrollBar().setValue(
             self.chat_history.verticalScrollBar().maximum()
         )
-            
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
