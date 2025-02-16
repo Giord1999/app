@@ -1,25 +1,69 @@
 import json
+import difflib
+import os
 from loan import Loan, DbManager
+
+#TODO: fare in modo che il chatbot sia un vero e proprio agente. Esempio: quando creo/modifico un prestito io devo poter fare in modo di crearlo direttamente in chat dicendogli tutte le cose che sono necessarie direttamente nella chat.
 
 class Chatbot:
     def __init__(self, intents_file):
+        # Converti il percorso in assoluto se è relativo
+        if not os.path.isabs(intents_file):
+            intents_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), intents_file)
         self.intents = self.load_intents(intents_file)
-        # Mappa degli intent verso i metodi di gestione
-        self.intent_methods = {
-            "create_loan": self.handle_create_loan,
-            "save_loan": self.handle_save_loan,
-            "delete_loan": self.handle_delete_loan,
-            "update_loan": self.handle_update_loan,
-            "amortization_schedule": self.handle_amortization_schedule,
-            "euribor_rates": self.handle_euribor_rates,
-            "consolidate_loans": self.handle_consolidate_loans,
-            "calculate_taeg": self.handle_calculate_taeg,
-            "pricing_analysis": self.handle_pricing_analysis,
-            "compare_loans": self.handle_compare_loans,
-            "display_loans": self.handle_display_loans
+        # Aggiungiamo una mappatura degli intent che richiedono un prestito selezionato
+        self.loan_specific_intents = {
+            "update_loan", 
+            "amortization_schedule",
+            "euribor_rates",
+            "calculate_taeg",
+            "pricing_analysis",
+            "plot_graph"
         }
-        # Crea un'istanza del gestore del database (modifica i parametri in base al tuo ambiente)
+        
+        # Aggiungiamo una mappatura degli intent che non richiedono un prestito selezionato
+        self.non_loan_specific_intents = {
+            "create_loan",
+            "display_loans",
+            "compare_loans",
+            "consolidate_loans",
+            "greeting"
+        }
+        # Istanza del gestore del database (modificare i parametri in base al proprio ambiente)
         self.db_manager = DbManager(dbname="loanmanager", user="user", password="password")
+
+
+    def validate_context(self, intent, selected_loan=None):
+        """
+        Valida il contesto dell'operazione.
+        
+        Args:
+            intent (str): L'intent da validare
+            selected_loan: Il prestito attualmente selezionato (se presente)
+            
+        Returns:
+            tuple: (bool, str) - (validità, messaggio di errore se non valido)
+        """
+        if self.needs_selected_loan(intent):
+            if not selected_loan:
+                return False, (
+                    "You need to select a loan first. "
+                    "Would you like to see available loans? "
+                    "Just say 'show loans' or 'display loans' and I'll help you select one."
+                )
+        return True, ""
+    
+    def needs_selected_loan(self, intent):
+        """
+        Verifica se l'intent richiede un prestito selezionato.
+        
+        Args:
+            intent (str): L'intent da verificare
+            
+        Returns:
+            bool: True se l'intent richiede un prestito selezionato, False altrimenti
+        """
+        return intent in self.loan_specific_intents
     
     def load_intents(self, file_path):
         """Carica il file degli intent."""
@@ -28,13 +72,53 @@ class Chatbot:
         return data.get("intents", [])
     
     def get_intent(self, message):
-        """Determina l'intento in base al messaggio dell'utente."""
+        """
+        Determina l'intento in base al messaggio dell'utente utilizzando fuzzy matching.
+        Confronta il messaggio con ciascuno dei pattern definiti negli intent e seleziona l'intento
+        corrispondente con il punteggio di similarità maggiore (se superiore ad una soglia).
+        """
         message_lower = message.lower()
+        best_match = None
+        best_ratio = 0.0
         for intent in self.intents:
             for pattern in intent["patterns"]:
-                if pattern.lower() in message_lower:
-                    return intent["tag"]
+                ratio = difflib.SequenceMatcher(None, message_lower, pattern.lower()).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_match = intent["tag"]
+        # Soglia di similarità (0.6 può essere modificata in base alle esigenze)
+        if best_ratio >= 0.6:
+            return best_match
         return "unknown"
+        
+    def get_action(self, intent, selected_loan=None):
+        """
+        Restituisce l'azione corrispondente all'intent specificato, 
+        verificando prima il contesto.
+        
+        Args:
+            intent (str): L'intent identificato
+            selected_loan: Il prestito attualmente selezionato (se presente)
+            
+        Returns:
+            function: Il metodo di gestione o None se non valido
+        """
+        # Verifica il contesto
+        is_valid, error_message = self.validate_context(intent, selected_loan)
+        if not is_valid:
+            print(f"Chatbot: {error_message}")
+            return None
+            
+        # Se l'intent è valido, restituisci il metodo corrispondente
+        if intent in self.intent_methods:
+            return self.intent_methods[intent]
+            
+        return None
+        
+    def operator_confirmation(self, prompt):
+        """Richiede all'operatore umano di confermare l'azione."""
+        confirmation = input(prompt + " (Operatore: si/no): ")
+        return confirmation.lower() == "si"
     
     def start_conversation(self):
         """Avvia la conversazione in modalità loop."""
@@ -51,7 +135,7 @@ class Chatbot:
                 print("Chatbot: Mi dispiace, non ho capito la richiesta.")
     
     def handle_create_loan(self):
-        """Gestisce la creazione di un nuovo prestito."""
+        """Gestisce la creazione di un nuovo prestito, richiedendo conferma all'operatore."""
         print("Chatbot: Iniziamo la creazione del prestito.")
         try:
             rate = float(input("Inserisci il tasso di interesse (in decimale, es. 0.05 per 5%): "))
@@ -69,7 +153,25 @@ class Chatbot:
                     update_frequency = input("Inserisci la frequenza di aggiornamento dell'Euribor (mensile, trimestrale, semestrale, annuale): ")
             downpayment_percent = float(input("Inserisci la percentuale di acconto (0 se nessuno): "))
             
-            # Crea il prestito (verrà salvato automaticamente in db grazie alla logica interna)
+            # Riepilogo dati raccolti
+            summary = (
+                f"Tasso: {rate}\n"
+                f"Durata: {term}\n"
+                f"Importo: {loan_amount}\n"
+                f"Tipo di ammortamento: {amortization_type}\n"
+                f"Frequenza: {frequency}\n"
+                f"Tipo di tasso: {rate_type}\n"
+                f"Uso Euribor: {use_euribor}\n"
+                f"Frequenza aggiornamento: {update_frequency}\n"
+                f"Acconto: {downpayment_percent}"
+            )
+            print("Chatbot: Riepilogo del prestito:")
+            print(summary)
+            if not self.operator_confirmation("Operatore, confermi la creazione del prestito con i dati sopra?"):
+                print("Chatbot: Creazione del prestito annullata.")
+                return
+            
+            # Creazione del prestito (che verrà salvato successivamente nel db se confermato)
             loan = Loan(
                 db_manager=self.db_manager,
                 rate=rate,
@@ -87,11 +189,15 @@ class Chatbot:
             print(f"Chatbot: Errore nella creazione del prestito: {e}")
     
     def handle_save_loan(self):
-        """Gestisce il salvataggio del prestito corrente nel database."""
+        """Gestisce il salvataggio del prestito corrente nel database, previa conferma dell'operatore."""
         print("Chatbot: Salvataggio del prestito in corso...")
-        # Utilizza l'ultimo prestito creato (presente nella lista Loan.loans)
         if Loan.loans:
             loan = Loan.loans[-1]
+            print("Chatbot: Dati del prestito da salvare:")
+            print(loan)  # Si assume che Loan implementi un __str__ appropriato
+            if not self.operator_confirmation("Operatore, confermi il salvataggio del prestito corrente?"):
+                print("Chatbot: Salvataggio annullato.")
+                return
             try:
                 loan.save_to_db()
                 print("Chatbot: Prestito salvato con successo.")
@@ -101,9 +207,12 @@ class Chatbot:
             print("Chatbot: Nessun prestito trovato da salvare.")
     
     def handle_delete_loan(self):
-        """Gestisce l'eliminazione di un prestito."""
+        """Gestisce l'eliminazione di un prestito, richiedendo conferma all'operatore."""
         print("Chatbot: Eliminazione di un prestito.")
         loan_id = input("Inserisci l'ID del prestito da eliminare: ")
+        if not self.operator_confirmation(f"Operatore, confermi l'eliminazione del prestito con ID {loan_id}?"):
+            print("Chatbot: Eliminazione annullata.")
+            return
         try:
             result = Loan.delete_loan(loan_id)
             if result:
@@ -114,7 +223,7 @@ class Chatbot:
             print(f"Chatbot: Errore: {e}")
     
     def handle_update_loan(self):
-        """Gestisce l'aggiornamento dei dati di un prestito esistente."""
+        """Gestisce l'aggiornamento di un prestito esistente, previa conferma dell'operatore."""
         print("Chatbot: Aggiornamento del prestito.")
         loan_id = input("Inserisci l'ID del prestito da aggiornare: ")
         loan = next((l for l in Loan.loans if l.loan_id == loan_id), None)
@@ -126,6 +235,21 @@ class Chatbot:
                 new_amortization_type = input("Inserisci il nuovo tipo di ammortamento (Francese/Italiano): ")
                 new_frequency = input("Inserisci la nuova frequenza dei pagamenti (mensile, trimestrale, semestrale, annuale): ")
                 new_downpayment_percent = float(input("Inserisci la nuova percentuale di acconto: "))
+                
+                summary = (
+                    f"Nuovo tasso: {new_rate}\n"
+                    f"Nuova durata: {new_term}\n"
+                    f"Nuovo importo: {new_loan_amount}\n"
+                    f"Nuovo tipo di ammortamento: {new_amortization_type}\n"
+                    f"Nuova frequenza: {new_frequency}\n"
+                    f"Nuova percentuale di acconto: {new_downpayment_percent}"
+                )
+                print("Chatbot: Riepilogo aggiornamento prestito:")
+                print(summary)
+                if not self.operator_confirmation("Operatore, confermi l'aggiornamento del prestito?"):
+                    print("Chatbot: Aggiornamento annullato.")
+                    return
+                
                 loan.edit_loan(new_rate, new_term, new_loan_amount, new_amortization_type, new_frequency, new_downpayment_percent)
                 print("Chatbot: Prestito aggiornato con successo.")
             except Exception as e:
@@ -134,7 +258,7 @@ class Chatbot:
             print("Chatbot: Prestito non trovato.")
     
     def handle_amortization_schedule(self):
-        """Mostra il piano di ammortamento e, opzionalmente, il grafico relativo."""
+        """Visualizza il piano di ammortamento e, opzionalmente, il grafico relativo."""
         print("Chatbot: Visualizzazione del piano di ammortamento.")
         loan_id = input("Inserisci l'ID del prestito: ")
         loan = next((l for l in Loan.loans if l.loan_id == loan_id), None)
@@ -171,7 +295,7 @@ class Chatbot:
             print("Chatbot: Prestito non trovato.")
     
     def handle_consolidate_loans(self):
-        """Consolida più prestiti in uno solo."""
+        """Consolida più prestiti in uno solo, previa conferma dell'operatore."""
         print("Chatbot: Consolidamento dei prestiti.")
         loan_ids = input("Inserisci gli ID dei prestiti da consolidare, separati da una virgola: ")
         loan_ids = [lid.strip() for lid in loan_ids.split(",")]
@@ -180,6 +304,14 @@ class Chatbot:
             print("Chatbot: Sono necessari almeno due prestiti per il consolidamento.")
             return
         frequency = input("Inserisci la frequenza dei pagamenti per il prestito consolidato (mensile, trimestrale, semestrale, annuale): ")
+        
+        print("Chatbot: Riepilogo consolidamento prestiti:")
+        print("Prestiti selezionati: " + ", ".join(loan_ids))
+        print("Frequenza: " + frequency)
+        if not self.operator_confirmation("Operatore, confermi il consolidamento dei prestiti?"):
+            print("Chatbot: Consolidamento annullato.")
+            return
+        
         try:
             consolidated_loan = Loan.consolidate_loans(selected_loans, frequency)
             print(f"Chatbot: Prestito consolidato creato con ID: {consolidated_loan.loan_id}")
@@ -209,7 +341,6 @@ class Chatbot:
             try:
                 analysis = loan.calculate_probabilistic_pricing()
                 print("Chatbot: Risultati dell'analisi di pricing:")
-                # Se analysis è un DataFrame "styled", stampiamo i dati sottostanti
                 print(analysis.data)
             except Exception as e:
                 print(f"Chatbot: Errore nell'analisi di pricing: {e}")
