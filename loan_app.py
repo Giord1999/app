@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QInputDialog)
+                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QInputDialog)
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QFont
@@ -2220,6 +2220,114 @@ class ProbabilisticPricingDialog(FluentDialog):
             QMessageBox.critical(self, "Error", f"Failed to calculate pricing: {str(e)}")
 
 
+class LoanSelectionDialog(FluentDialog):
+    def __init__(self, loans, multi_select=False, parent=None):
+        super().__init__("Select Loan(s)", parent)
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(400)
+        self.selected_loans = []
+        
+        # Main layout
+        main_widget = QWidget()
+        layout = QVBoxLayout(main_widget)
+        
+        # Search bar
+        search_container = QWidget()
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(0, 0, 0, 10)
+        
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search loans...")
+        self.search_input.textChanged.connect(self.filter_loans)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                background-color: #f8f9fa;
+            }
+            QLineEdit:focus {
+                border-color: #0078D4;
+                background-color: #ffffff;
+            }
+        """)
+        search_layout.addWidget(self.search_input)
+        
+        # Loans list
+        self.loans_list = QListWidget()
+        self.loans_list.setSelectionMode(
+            QListWidget.MultiSelection if multi_select else QListWidget.SingleSelection
+        )
+        self.loans_list.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                padding: 5px;
+            }
+            QListWidget::item {
+                padding: 10px;
+                border-bottom: 1px solid #f0f0f0;
+            }
+            QListWidget::item:selected {
+                background-color: #e5f3ff;
+                color: #000000;
+            }
+            QListWidget::item:hover {
+                background-color: #f8f9fa;
+            }
+        """)
+        
+        # Populate loans
+        self.loans = loans
+        self.populate_loans()
+        
+        # Add widgets to layout
+        layout.addWidget(search_container)
+        layout.addWidget(self.loans_list)
+        
+        # Scroll area
+        scroll = QScrollArea()
+        scroll.setWidget(main_widget)
+        scroll.setWidgetResizable(True)
+        self.main_layout.insertWidget(0, scroll)
+        
+        # Buttons
+        select_btn = QPushButton("Select")
+        select_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        
+        self.button_layout.addWidget(cancel_btn)
+        self.button_layout.addWidget(select_btn)
+
+    def filter_loans(self):
+        filter_text = self.search_input.text()
+        self.populate_loans(filter_text)
+        
+    def populate_loans(self, filter_text=""):
+        """Popola la lista dei prestiti con filtro opzionale"""
+        self.loans_list.clear()
+        for loan in self.loans:
+            # Crea il testo dell'item
+            item_text = (f"Loan {loan.loan_id}\n"
+                        f"Amount: €{loan.loan_amount:,.2f}\n"
+                        f"Rate: {loan.initial_rate * 100:.2f}%\n"
+                        f"Type: {loan.amortization_type}")
+            
+            # Applica il filtro se presente
+            if filter_text.lower() in item_text.lower():
+                # Crea l'item
+                item = QListWidgetItem(item_text)
+                # Salva il riferimento al prestito nell'item
+                item.setData(Qt.UserRole, loan)
+                # Aggiungi l'item alla lista
+                self.loans_list.addItem(item)
+
+    def get_selected_loans(self):
+        """Restituisce i prestiti selezionati"""
+        selected_items = self.loans_list.selectedItems()
+        return [item.data(Qt.UserRole) for item in selected_items]
+
 class ChatAssistantDialog(QDialog):
 
     def __init__(self, loan_app, parent=None):
@@ -2445,6 +2553,16 @@ class ChatAssistantDialog(QDialog):
             # Altrimenti procediamo con il normale flusso di intent
             intent = self.chatbot.get_intent(user_message)
             
+            # Verifica la validità del contesto
+            is_valid, error_message = self.chatbot.validate_context(
+                intent, 
+                self.loan_app.selected_loan
+            )
+            
+            if not is_valid:
+                self.append_message("Assistant", error_message)
+                return
+                
             # Gestisci gli intent speciali in modo asincrono
             if intent in ["create_loan", "update_loan", "pricing_analysis", "payment_analysis"]:
                 self.handle_special_intent(intent)
@@ -2455,6 +2573,7 @@ class ChatAssistantDialog(QDialog):
         except Exception as e:
             self.append_message("Assistant", f"An error occurred: {str(e)}")
 
+        
     def handle_special_intent(self, intent):
         """Gestisce gli intent speciali che richiedono dialoghi"""
         if intent == "create_loan":
@@ -2503,6 +2622,7 @@ class ChatAssistantDialog(QDialog):
                                         "Hello! I'm here to help you manage your loans.",
                                         "Good day! What can I do for you today?"
                                     ])),
+            "display_loans": lambda: self.show_loans(allow_selection=True),
             "amortization_schedule": lambda: self._handle_amortization(),
             "calculate_taeg": lambda: self._handle_taeg(),
             "compare_loans": lambda: self._handle_compare_loans(),
@@ -2563,6 +2683,49 @@ class ChatAssistantDialog(QDialog):
                 "Please make sure all loans have valid data."
             )
 
+
+    def show_loans(self, allow_selection=True, multi_select=False):
+        """Shows loans and optionally allows selection"""
+        if not self.loan_app.loans:
+            self.append_message("Assistant", "No loans found in the system.")
+            return None
+
+        if allow_selection:
+            dialog = LoanSelectionDialog(self.loan_app.loans, multi_select=multi_select, parent=self)
+            if dialog.exec_() == QDialog.Accepted:
+                selected_loans = dialog.get_selected_loans()
+                if selected_loans:
+                    if multi_select:
+                        summary = "Selected loans:\n"
+                        for loan in selected_loans:
+                            summary += f"- Loan {loan.loan_id}: €{loan.loan_amount:,.2f}\n"
+                    else:
+                        loan = selected_loans[0]
+                        # Imposta il prestito selezionato nell'applicazione principale
+                        self.loan_app.selected_loan = loan
+                        summary = (f"Selected loan {loan.loan_id}:\n"
+                                f"Amount: €{loan.loan_amount:,.2f}\n"
+                                f"Rate: {loan.initial_rate * 100:.2f}%\n"
+                                f"Type: {loan.amortization_type}")
+                    self.append_message("Assistant", summary)
+                    return selected_loans
+                else:
+                    self.append_message("Assistant", "No loans selected.")
+                    return None
+            else:
+                self.append_message("Assistant", "Selection cancelled.")
+                return None
+        else:
+            # Just show the loans without selection
+            loans_info = "Available loans:\n\n"
+            for loan in self.loan_app.loans:
+                loans_info += (f"Loan {loan.loan_id}\n"
+                            f"Amount: €{loan.loan_amount:,.2f}\n"
+                            f"Rate: {loan.initial_rate * 100:.2f}%\n"
+                            f"Type: {loan.amortization_type}\n"
+                            f"{'─' * 30}\n")
+            self.append_message("Assistant", loans_info)
+            return None
 
     def _handle_plot(self):
         """Gestisce la visualizzazione del grafico"""
@@ -3088,26 +3251,6 @@ class ChatAssistantDialog(QDialog):
         """Mostra un QMessageBox per chiedere conferma all'operatore"""
         reply = QMessageBox.question(self, "Conferma", prompt, QMessageBox.Yes | QMessageBox.No)
         return reply == QMessageBox.Yes
-
-    class GuiInputManager:
-        """
-        Context manager per intercettare le chiamate a input() e sostituirle
-        con QInputDialog.getText().
-        """
-        def __init__(self, parent):
-            self.parent = parent
-            self.original_input = __builtins__.input
-        def __enter__(self):
-            __builtins__.input = self.gui_input
-            return self
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            __builtins__.input = self.original_input
-        def gui_input(self, prompt):
-            text, ok = QInputDialog.getText(self.parent, "Input", prompt)
-            if ok:
-                return text
-            else:
-                raise Exception("Input cancelled by user")
     
     class GuiPrintManager:
         """
