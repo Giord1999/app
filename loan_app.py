@@ -1,3 +1,4 @@
+#Imports for the GUI
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, 
                              QLineEdit, QComboBox, QListWidget, QMessageBox, 
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
@@ -8,23 +9,23 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QFont
 from PyQt5.QtCore import Qt, QSize, QTimer
-import sys
-import os
-import time
 
-import matplotlib
-import numpy as np
 
 # Set the backend for matplotlib
+import matplotlib
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
+
+#Imports for the backend
+import sys
+import os
+import time
+import numpy as np
 import pandas as pd
 import psycopg2
 from loan import Loan, DbManager
-
-
 from ai_chatbot_loan import Chatbot
 
 
@@ -2505,7 +2506,7 @@ class ChatAssistantDialog(QDialog):
             "amortization_schedule": lambda: self._handle_amortization(),
             "calculate_taeg": lambda: self._handle_taeg(),
             "compare_loans": lambda: self._handle_compare_loans(),
-            "plot_graph": lambda: self._handle_plot(),
+            "plot_graph": lambda: self._handle_plot()
             
         }
 
