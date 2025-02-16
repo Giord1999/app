@@ -3,11 +3,11 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame)
+                             QToolButton, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QInputDialog)
 
 
-from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPainterPath, QColor, QFont, QFontMetrics
-from PyQt5.QtCore import Qt, QSize, QTimer,  QRectF, QPointF
+from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QFont
+from PyQt5.QtCore import Qt, QSize, QTimer
 import sys
 import os
 import time
@@ -854,6 +854,7 @@ class AdditionalCostsDialog(FluentDialog):
 
 
 class LoanPaymentAnalysisDialog(FluentDialog):
+    """Finestra per l'analisi dei pagamenti"""
     def __init__(self, loan, parent=None):
         super().__init__("Payment Analysis", parent)
         self.setMinimumWidth(500)
@@ -2218,22 +2219,32 @@ class ProbabilisticPricingDialog(FluentDialog):
             QMessageBox.critical(self, "Error", f"Failed to calculate pricing: {str(e)}")
 
 
+class ChatAssistantDialog(QDialog):
 
-class ChatAssistantDialog(FluentDialog):
     def __init__(self, loan_app, parent=None):
-        super().__init__("LoanManager AI Assistant", parent)
+        super().__init__(parent)
+        self.setWindowTitle("LoanManager AI Assistant")
         self.loan_app = loan_app
+        # Aggiungi l'icona della finestra
+        self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
+        # Costruiamo il percorso assoluto al file degli intent
         intents_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'intents.json')
         self.chatbot = Chatbot(intents_file)
+        # Sostituisci la conferma operatore con una versione GUI
+        self.chatbot.operator_confirmation = lambda prompt: self.gui_operator_confirmation(prompt)
+        self.main_layout = QVBoxLayout(self)
+        # Stato della conversazione per gestire i flussi
+        self.current_conversation_state = None
+        self.conversation_data = {}
         self.setup_ui()
         self.setup_styles()
         
     def setup_ui(self):
-        # Set dialog size and background
+        # Imposta dimensione minima e background
         self.setMinimumWidth(900)
         self.setMinimumHeight(700)
         
-        # Main chat container
+        # Container principale per la chat
         chat_container = QWidget()
         chat_layout = QVBoxLayout(chat_container)
         chat_layout.setSpacing(0)
@@ -2244,12 +2255,12 @@ class ChatAssistantDialog(FluentDialog):
         header.setObjectName("chatHeader")
         header_layout = QHBoxLayout(header)
         
-        # Assistant avatar
+        # Avatar dell'assistente
         avatar_label = QLabel()
         avatar_pixmap = QPixmap(resource_path("chatbot_icon.png")).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         avatar_label.setPixmap(avatar_pixmap)
         
-        # Assistant name and status
+        # Nome e stato dell'assistente
         name_status = QVBoxLayout()
         name_label = QLabel("LoanManager Assistant")
         name_label.setObjectName("assistantName")
@@ -2262,7 +2273,7 @@ class ChatAssistantDialog(FluentDialog):
         header_layout.addLayout(name_status)
         header_layout.addStretch()
         
-        # Chat history area with custom background
+        # Area di chat con background personalizzato
         chat_bg = QWidget()
         chat_bg.setObjectName("chatBackground")
         chat_bg_layout = QVBoxLayout(chat_bg)
@@ -2273,7 +2284,7 @@ class ChatAssistantDialog(FluentDialog):
         self.chat_history.setFrameShape(QFrame.NoFrame)
         chat_bg_layout.addWidget(self.chat_history)
         
-        # Message input area
+        # Area di input del messaggio
         input_container = QWidget()
         input_container.setObjectName("inputContainer")
         input_layout = QHBoxLayout(input_container)
@@ -2293,14 +2304,13 @@ class ChatAssistantDialog(FluentDialog):
         input_layout.addWidget(self.message_input)
         input_layout.addWidget(send_button)
         
-        # Add all components to main layout
+        # Aggiungi i componenti al layout principale
         chat_layout.addWidget(header)
         chat_layout.addWidget(chat_bg)
         chat_layout.addWidget(input_container)
-        
         self.main_layout.insertWidget(0, chat_container)
         
-        # Welcome message with typing animation
+        # Messaggio di benvenuto con animazione di digitazione
         QTimer.singleShot(500, lambda: self.animate_typing(
             "Assistant", 
             "Hello! I'm your LoanManager AI Assistant. How can I help you today? 👋"
@@ -2391,72 +2401,731 @@ class ChatAssistantDialog(FluentDialog):
         """)
     
     def animate_typing(self, sender, message):
-        """Animates the typing indicator before showing the message"""
+        """Anima l'indicatore di digitazione prima di mostrare il messaggio"""
         typing_indicator = "Typing..."
         self.append_message(sender, typing_indicator, is_typing=True)
         QTimer.singleShot(1500, lambda: self.replace_last_message(sender, message))
     
     def replace_last_message(self, sender, message):
-        """Replaces the last message in chat history"""
+        """Sostituisce l'ultimo messaggio nella cronologia della chat"""
         cursor = self.chat_history.textCursor()
         cursor.movePosition(cursor.End)
         cursor.movePosition(cursor.StartOfBlock, cursor.KeepAnchor)
         cursor.removeSelectedText()
         self.append_message(sender, message)
-    
+        
     def send_message(self):
+        """Gestisce l'invio di messaggi e il flusso della conversazione"""
         user_message = self.message_input.text().strip()
         if not user_message:
             return
 
-        # Display user message
         self.append_message("User", user_message)
         self.message_input.clear()
 
-        intent = self.chatbot.get_intent(user_message)
-        
-        try:
-            # Mappa gli intenti a funzioni specifiche
-            intent_actions = {
-                "greeting": lambda: self.append_message("Assistant", 
-                                    np.random.choice([
-                                        "Ciao! Come posso aiutarti con i tuoi prestiti?",
-                                        "Salve! Sono qui per aiutarti a gestire i tuoi prestiti.",
-                                        "Buongiorno! In cosa posso esserti utile oggi?"
-                                    ])),
-                "goodbye": lambda: self.append_message("Assistant", 
-                                    np.random.choice([
-                                        "Arrivederci! Non esitare a tornare se hai bisogno di aiuto.",
-                                        "A presto! Sarò qui per aiutarti con i tuoi prestiti."
-                                    ])),
-                "thanks": lambda: self.append_message("Assistant", 
-                                    np.random.choice([
-                                        "Di niente! Sono qui per questo.",
-                                        "È un piacere poterti aiutare."
-                                    ])),
-                "create_loan": self.loan_app.new_loan,
-                "delete_loan": lambda: self.loan_app.delete_loan(None),
-                "select_loan": self.loan_app.select_loan,
-                "payment_analysis": self.loan_app.open_payment_analysis,
-                "plot_graph": self.loan_app.plot,
-                "update_loan": self.loan_app.edit_loan,
-                "amortization_schedule": self.loan_app.amort,
-                "consolidate_loans": self.loan_app.consolidate_loans,
-                "calculate_taeg": self.loan_app.open_taeg_dialog,
-                "pricing_analysis": self.loan_app.open_probabilistic_pricing,
-                "compare_loans": self.loan_app.compare_loans,
-                "display_loans": lambda: self.append_message("Assistant", self.loan_app.display_loans()),
-            }
+        # Usa QTimer.singleShot per gestire la risposta in modo asincrono
+        QTimer.singleShot(0, lambda: self.process_message(user_message))
 
-            if intent in intent_actions:
-                intent_actions[intent]()
-                self.append_message("Assistant", "Azione completata con successo!")
+    def process_message(self, user_message):
+        """Processa il messaggio in modo asincrono"""
+        try:
+            # Se siamo in uno stato di conversazione, gestiamo quello
+            if self.current_conversation_state:
+                if self.current_conversation_state.startswith("create_loan"):
+                    self.handle_create_loan_conversation(user_message)
+                elif self.current_conversation_state.startswith("update_loan"):
+                    self.handle_update_loan_conversation(user_message)
+                elif self.current_conversation_state.startswith("pricing"):
+                    self.handle_pricing_conversation(user_message)
+                elif self.current_conversation_state.startswith("payment"):
+                    self.handle_payment_conversation(user_message)
+                return
+
+            # Altrimenti procediamo con il normale flusso di intent
+            intent = self.chatbot.get_intent(user_message)
+            
+            # Gestisci gli intent speciali in modo asincrono
+            if intent in ["create_loan", "update_loan", "pricing_analysis", "payment_analysis"]:
+                self.handle_special_intent(intent)
             else:
-                self.append_message("Assistant", "Mi dispiace, non capisco la richiesta.")
+                # Gestisci gli intent standard
+                self.handle_standard_intent(intent)
+
+        except Exception as e:
+            self.append_message("Assistant", f"An error occurred: {str(e)}")
+
+    def handle_special_intent(self, intent):
+        """Gestisce gli intent speciali che richiedono dialoghi"""
+        if intent == "create_loan":
+            self.current_conversation_state = "create_loan_amount"
+            self.conversation_data = {}
+            self.append_message("Assistant", "Let's create a new loan. What's the loan amount?")
+            
+        elif intent == "update_loan":
+            if not self.loan_app.selected_loan:
+                self.append_message("Assistant", "Please select a loan first using the main interface.")
+                return
+            self.current_conversation_state = "update_loan_field"
+            self.conversation_data = {"loan": self.loan_app.selected_loan}
+            self.append_message("Assistant", 
+                "What would you like to update?\n" +
+                "1. Interest rate\n" +
+                "2. Term\n" +
+                "3. Loan amount\n" +
+                "4. Payment frequency")
+                
+        elif intent == "pricing_analysis":
+            if not self.loan_app.selected_loan:
+                self.append_message("Assistant", "Please select a loan first using the main interface.")
+                return
+            self.current_conversation_state = "pricing_initial_default"
+            self.conversation_data = {"loan": self.loan_app.selected_loan}
+            self.append_message("Assistant", "What's the initial default probability? (0-1)")
+            
+        elif intent == "payment_analysis":
+            if not self.loan_app.selected_loan:
+                self.append_message("Assistant", "Please select a loan first using the main interface.")
+                return
+            self.current_conversation_state = "payment_type"
+            self.conversation_data = {"loan": self.loan_app.selected_loan}
+            self.append_message("Assistant", 
+                "How would you like to analyze payments?\n" +
+                "1. Early payoff with extra payments\n" +
+                "2. Faster payoff in fewer years")
+
+    def handle_standard_intent(self, intent):
+        """Gestisce gli intent standard che non richiedono dialoghi"""
+        intent_actions = {
+            "greeting": lambda: self.append_message("Assistant", 
+                                    np.random.choice([
+                                        "Hi! How can I help you with your loans?",
+                                        "Hello! I'm here to help you manage your loans.",
+                                        "Good day! What can I do for you today?"
+                                    ])),
+            "amortization_schedule": lambda: self._handle_amortization(),
+            "calculate_taeg": lambda: self._handle_taeg(),
+            "compare_loans": lambda: self._handle_compare_loans(),
+            "plot_graph": lambda: self._handle_plot(),
+            
+        }
+
+        if intent in intent_actions:
+            intent_actions[intent]()
+        else:
+            self.append_message("Assistant", 
+                "I apologize, but I don't understand that request. Here are some things I can help you with:\n" +
+                "- Create a new loan\n" +
+                "- Delete a loan\n" +
+                "- Update loan details\n" +
+                "- Show amortization schedule\n" +
+                "- Compare loans\n" +
+                "- Calculate TAEG\n" +
+                "- Analyze loan pricing\n" +
+                "- Show all loans"
+            )
+
+    def _handle_compare_loans(self):
+        """Gestisce la comparazione dei prestiti"""
+        # Verifica che ci siano almeno 2 prestiti da confrontare
+        if len(self.loan_app.loans) < 2:
+            self.append_message(
+                "Assistant", 
+                "You need at least two loans to make a comparison. Please create more loans first."
+            )
+            return
+            
+        try:
+            # Genera la comparazione usando il metodo statico della classe Loan
+            comparison_text = Loan.compare_loans(self.loan_app.loans)
+            
+            # Mostra il dialog di comparazione
+            dialog = LoanComparisonDialog(comparison_text, self)
+            
+            if dialog.exec_() == QDialog.Accepted:
+                # Formatta il testo della comparazione per la chat
+                formatted_text = (
+                    "Here's the loan comparison:\n\n"
+                    f"{comparison_text}\n\n"
+                    "Key findings:\n"
+                    "- The loans have been compared based on their total cost and payment structure\n"
+                    "- Consider the different terms and rates when making your decision\n"
+                    "- Remember to factor in any additional costs or fees"
+                )
+                self.append_message("Assistant", formatted_text)
+            else:
+                self.append_message("Assistant", "Comparison view cancelled.")
                 
         except Exception as e:
-            self.append_message("Assistant", f"Sorry, an error occurred: {str(e)}")
+            self.append_message(
+                "Assistant", 
+                f"Error generating loan comparison: {str(e)}\n"
+                "Please make sure all loans have valid data."
+            )
 
+
+    def _handle_plot(self):
+        """Gestisce la visualizzazione del grafico"""
+        if not self.loan_app.selected_loan:
+            self.append_message("Assistant", "Please select a loan first using the main interface.")
+            return
+            
+        try:
+            dialog = PlotDialog(self.loan_app.selected_loan, self)
+            if dialog.exec_() == QDialog.Accepted:
+                self.append_message("Assistant", 
+                    "Plot generated successfully!\n\n"
+                    "The plot shows:\n"
+                    "- Loan balance over time\n" 
+                    "- Cumulative interest paid\n"
+                    "- Important loan milestones\n\n"
+                    "You can use the toolbar to:\n"
+                    "- Zoom in/out\n"
+                    "- Pan across the plot\n" 
+                    "- Save the plot as an image")
+            else:
+                self.append_message("Assistant", "Plot view cancelled.")
+                
+        except Exception as e:
+            self.append_message("Assistant", 
+                f"Error generating plot: {str(e)}\n"
+                "Please make sure the loan data is valid.")
+            print(f"Debug - Plot error: {str(e)}")  # Per debug
+
+
+    def _handle_amortization(self):
+        """Gestisce la visualizzazione del piano di ammortamento"""
+        if not self.loan_app.selected_loan:
+            self.append_message("Assistant", "Please select a loan first using the main interface.")
+            return
+            
+        try:
+            selected_loan = self.loan_app.selected_loan
+            
+            # Verifica che la tabella esista e abbia dati
+            if selected_loan.table is None or selected_loan.table.empty:
+                self.append_message("Assistant", "Unable to generate amortization schedule. The loan table is empty.")
+                return
+                
+            # Crea e mostra il dialog con la tabella
+            dialog = AmortizationDialog(selected_loan.table, self)
+            
+            # Mostra il dialog come modale
+            result = dialog.exec_()
+            
+            if result == QDialog.Accepted:
+                # Formatta e mostra il riepilogo
+                summary = (
+                    "Amortization schedule displayed successfully.\n"
+                    f"Total payments: {len(selected_loan.table)} installments\n"
+                    f"Total interest: €{selected_loan.table['Interest'].sum():,.2f}\n"
+                    f"Total amount paid: €{selected_loan.table['Payment'].sum():,.2f}"
+                )
+                self.append_message("Assistant", summary)
+            else:
+                self.append_message("Assistant", "Amortization schedule view cancelled.")
+                
+        except Exception as e:
+            error_msg = f"Error showing amortization schedule: {str(e)}"
+            self.append_message("Assistant", error_msg)
+            print(f"Debug - Amortization error: {str(e)}")  # Per debug
+            
+    def _handle_taeg(self):
+        """Gestisce il calcolo del TAEG"""
+        if not self.loan_app.selected_loan:
+            self.append_message("Assistant", "Please select a loan first using the main interface.")
+            return
+            
+        try:
+            dialog = TAEGCalculationDialog(self.loan_app.selected_loan, self)
+            if dialog.exec_() == QDialog.Accepted:
+                periodic = self.loan_app.selected_loan.taeg_periodic
+                annualized = self.loan_app.selected_loan.taeg_annualized
+                self.append_message("Assistant", 
+                    f"TAEG calculation completed successfully!\n" +
+                    f"Periodic TAEG: {periodic:.4f}%\n" +
+                    f"Annualized TAEG: {annualized:.4f}%"
+                )
+            else:
+                self.append_message("Assistant", "TAEG calculation cancelled.")
+        except Exception as e:
+            self.append_message("Assistant", f"Error calculating TAEG: {str(e)}")
+            
+    def handle_pricing_conversation(self, user_input):
+        """Gestisce il flusso di conversazione per l'analisi di pricing"""
+        try:
+            if self.current_conversation_state == "pricing_initial_default":
+                initial_default = float(user_input)
+                if not 0 <= initial_default <= 1:
+                    raise ValueError("Initial default must be between 0 and 1")
+                
+                self.conversation_data["initial_default"] = initial_default
+                self.current_conversation_state = "pricing_decay"
+                self.append_message("Assistant", 
+                    "What's the default decay rate? (0-1)")
+                    
+            elif self.current_conversation_state == "pricing_decay":
+                decay = float(user_input)
+                if not 0 <= decay <= 1:
+                    raise ValueError("Decay rate must be between 0 and 1")
+                    
+                self.conversation_data["decay"] = decay
+                self.current_conversation_state = "pricing_recovery"
+                self.append_message("Assistant", 
+                    "What's the recovery rate? (0-1)")
+                    
+            elif self.current_conversation_state == "pricing_recovery":
+                recovery = float(user_input)
+                if not 0 <= recovery <= 1:
+                    raise ValueError("Recovery rate must be between 0 and 1")
+                    
+                # Show confirmation dialog
+                dialog = ProbabilisticPricingDialog(self.conversation_data["loan"], self)
+                dialog.initial_default.setValue(self.conversation_data["initial_default"])
+                dialog.default_decay.setValue(self.conversation_data["decay"])
+                dialog.recovery_rate.setValue(recovery)
+                
+                if dialog.exec_() == QDialog.Accepted:
+                    results = dialog.results_view.toPlainText()
+                    self.append_message("Assistant", f"Pricing Analysis Results:\n{results}")
+                else:
+                    self.append_message("Assistant", "Analysis cancelled.")
+                    
+                self.current_conversation_state = None
+                self.conversation_data = {}
+                
+        except ValueError as e:
+            self.append_message("Assistant", f"Invalid input: {str(e)}. Please try again.")
+
+    def handle_payment_conversation(self, user_input):
+        """Gestisce il flusso di conversazione per l'analisi dei pagamenti"""
+        try:
+            if self.current_conversation_state == "payment_type":
+                if user_input not in ["1", "2"]:
+                    raise ValueError("Please enter 1 for early payoff or 2 for faster payoff")
+                    
+                self.conversation_data["analysis_type"] = user_input
+                if user_input == "1":
+                    self.current_conversation_state = "payment_extra_amount"
+                    self.append_message("Assistant", 
+                        "How much extra would you like to pay monthly? (€)")
+                else:
+                    self.current_conversation_state = "payment_years"
+                    self.append_message("Assistant", 
+                        "In how many years would you like to pay off the loan?")
+                    
+            elif self.current_conversation_state == "payment_extra_amount":
+                extra = float(user_input)
+                if extra < 0:
+                    raise ValueError("Extra payment must be positive")
+                    
+                dialog = LoanPaymentAnalysisDialog(self.conversation_data["loan"], self)
+                dialog.extra_payment.setValue(extra)
+                
+                if dialog.exec_() == QDialog.Accepted:
+                    result = dialog.early_results.toPlainText()
+                    self.append_message("Assistant", f"Payment Analysis Results:\n{result}")
+                else:
+                    self.append_message("Assistant", "Analysis cancelled.")
+                    
+                self.current_conversation_state = None
+                self.conversation_data = {}
+                
+            elif self.current_conversation_state == "payment_years":
+                years = float(user_input)
+                if not 1 <= years <= self.conversation_data["loan"].initial_term:
+                    raise ValueError(f"Years must be between 1 and {self.conversation_data['loan'].initial_term}")
+                    
+                dialog = LoanPaymentAnalysisDialog(self.conversation_data["loan"], self)
+                dialog.years_to_payoff.setValue(years)
+                
+                if dialog.exec_() == QDialog.Accepted:
+                    result = dialog.faster_results.toPlainText()
+                    self.append_message("Assistant", f"Payment Analysis Results:\n{result}")
+                else:
+                    self.append_message("Assistant", "Analysis cancelled.")
+                    
+                self.current_conversation_state = None
+                self.conversation_data = {}
+                
+        except ValueError as e:
+            self.append_message("Assistant", f"Invalid input: {str(e)}. Please try again.")
+
+    def handle_create_loan_conversation(self, user_input):
+        """Gestisce il flusso di conversazione per la creazione di un nuovo prestito"""
+        try:
+            if self.current_conversation_state == "create_loan_amount":
+                amount = float(user_input)
+                if amount <= 0:
+                    raise ValueError("Loan amount must be positive")
+                self.conversation_data["loan_amount"] = amount
+                self.current_conversation_state = "create_loan_rate"
+                self.append_message("Assistant", "What's the interest rate (as %)?")
+
+            elif self.current_conversation_state == "create_loan_rate":
+                rate = float(user_input)
+                if not 0 <= rate <= 100:
+                    raise ValueError("Interest rate must be between 0 and 100")
+                self.conversation_data["rate"] = rate
+                self.current_conversation_state = "create_loan_rate_type"
+                self.append_message("Assistant", 
+                    "Select rate type:\n" +
+                    "1. Fixed\n" +
+                    "2. Variable")
+
+            elif self.current_conversation_state == "create_loan_rate_type":
+                if user_input not in ["1", "2"]:
+                    raise ValueError("Please enter 1 for Fixed or 2 for Variable")
+                self.conversation_data["rate_type"] = "fixed" if user_input == "1" else "variable"
+                
+                if user_input == "2":  # Se tasso variabile, chiedi info Euribor
+                    self.current_conversation_state = "create_loan_euribor"
+                    self.append_message("Assistant", "Use Euribor rates? (yes/no)")
+                else:
+                    self.current_conversation_state = "create_loan_term"
+                    self.append_message("Assistant", "What's the loan term in years?")
+
+            elif self.current_conversation_state == "create_loan_euribor":
+                use_euribor = user_input.lower() in ["yes", "y"]
+                self.conversation_data["use_euribor"] = use_euribor
+                if use_euribor:
+                    self.current_conversation_state = "create_loan_update_frequency"
+                    self.append_message("Assistant", 
+                        "Select rate update frequency:\n" +
+                        "1. Monthly\n" +
+                        "2. Quarterly\n" +
+                        "3. Semi-annual\n" +
+                        "4. Annual")
+                else:
+                    self.current_conversation_state = "create_loan_term"
+                    self.append_message("Assistant", "What's the loan term in years?")
+
+            elif self.current_conversation_state == "create_loan_update_frequency":
+                freq_map = {"1": "monthly", "2": "quarterly", "3": "semi-annual", "4": "annual"}
+                if user_input not in freq_map:
+                    raise ValueError("Please select a number between 1 and 4")
+                self.conversation_data["update_frequency"] = freq_map[user_input]
+                self.current_conversation_state = "create_loan_term"
+                self.append_message("Assistant", "What's the loan term in years?")
+
+            elif self.current_conversation_state == "create_loan_term":
+                term = int(user_input)
+                if term <= 0:
+                    raise ValueError("Term must be positive")
+                self.conversation_data["term"] = term
+                self.current_conversation_state = "create_loan_type"
+                self.append_message("Assistant", 
+                    "What type of amortization?\n" +
+                    "1. French (constant payment)\n" +
+                    "2. Italian (declining payment)")
+
+            elif self.current_conversation_state == "create_loan_type":
+                if user_input not in ["1", "2"]:
+                    raise ValueError("Please enter 1 for French or 2 for Italian")
+                self.conversation_data["amortization_type"] = "French" if user_input == "1" else "Italian"
+                self.current_conversation_state = "create_loan_frequency"
+                self.append_message("Assistant", 
+                    "Select payment frequency:\n" +
+                    "1. Monthly\n" +
+                    "2. Quarterly\n" +
+                    "3. Semi-annual\n" +
+                    "4. Annual")
+
+            elif self.current_conversation_state == "create_loan_frequency":
+                freq_map = {"1": "monthly", "2": "quarterly", "3": "semi-annual", "4": "annual"}
+                if user_input not in freq_map:
+                    raise ValueError("Please select a number between 1 and 4")
+                self.conversation_data["frequency"] = freq_map[user_input]
+                self.current_conversation_state = "create_loan_downpayment"
+                self.append_message("Assistant", "Enter downpayment percentage (0-100):")
+
+            elif self.current_conversation_state == "create_loan_downpayment":
+                downpayment = float(user_input)
+                if not 0 <= downpayment <= 100:
+                    raise ValueError("Downpayment must be between 0 and 100")
+                self.conversation_data["downpayment_percent"] = downpayment
+                # Usa QTimer.singleShot per evitare loop di eventi annidati
+                QTimer.singleShot(0, lambda: self._show_loan_form())
+
+        except ValueError as e:
+            self.append_message("Assistant", f"Invalid input: {str(e)}. Please try again.")
+            
+    def _show_loan_preview(self):
+        """Mostra l'anteprima del prestito e gestisce la creazione"""
+        preview_dialog = QMessageBox()
+        preview_dialog.setWindowTitle("Create Loan Preview")
+        
+        # Prepara il testo dell'anteprima con tutti i parametri
+        preview_text = (
+            f"Amount: €{self.conversation_data['loan_amount']:,.2f}\n"
+            f"Interest Rate: {self.conversation_data['rate']}%\n"
+            f"Rate Type: {self.conversation_data['rate_type']}\n"
+            f"Term: {self.conversation_data['term']} years\n"
+            f"Type: {self.conversation_data['amortization_type']}\n"
+            f"Payment Frequency: {self.conversation_data['frequency']}\n"
+            f"Downpayment: {self.conversation_data['downpayment_percent']}%\n"
+        )
+        
+        if self.conversation_data.get('use_euribor'):
+            preview_text += f"Using Euribor rates\n"
+            preview_text += f"Update Frequency: {self.conversation_data['update_frequency']}\n"
+            
+        if self.conversation_data.get('additional_costs'):
+            preview_text += "\nAdditional Costs:\n"
+            for name, amount in self.conversation_data['additional_costs'].items():
+                preview_text += f"- {name}: €{amount:,.2f}\n"
+        
+        preview_dialog.setText(f"Please review the loan details:\n\n{preview_text}\n"
+                            "Would you like to see the full creation dialog?")
+        preview_dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+        preview_dialog.setDefaultButton(QMessageBox.Yes)
+        
+        response = preview_dialog.exec_()
+        self._handle_preview_response(response)
+
+    def _handle_preview_response(self, response):
+        """Gestisce la risposta dell'utente all'anteprima"""
+        if response == QMessageBox.Yes:
+            self._show_full_dialog()
+        elif response == QMessageBox.No:
+            self._create_loan_directly()
+        else:  # Cancel
+            self.animate_typing("Assistant", "Loan creation cancelled.")
+            
+        self.current_conversation_state = None
+        self.conversation_data = {}
+
+    def _show_loan_form(self):
+        """Mostra il form di creazione prestito precompilato"""
+        try:
+            # Crea e configura il dialog
+            dialog = LoanDialog(self)
+            
+            # Precompila i campi con i dati della conversazione
+            dialog.rate_entry.setValue(self.conversation_data["rate"])
+            dialog.term_entry.setValue(self.conversation_data["term"])
+            dialog.pv_entry.setValue(self.conversation_data["loan_amount"])
+            dialog.amortization_combobox.setCurrentText(self.conversation_data["amortization_type"])
+            dialog.frequency_combobox.setCurrentText(self.conversation_data["frequency"])
+            dialog.downpayment_entry.setValue(self.conversation_data["downpayment_percent"])
+            
+            # Aggiungi parametri opzionali se presenti
+            if "rate_type" in self.conversation_data:
+                dialog.rate_type = self.conversation_data["rate_type"]
+            if "use_euribor" in self.conversation_data:
+                dialog.use_euribor = self.conversation_data["use_euribor"]
+            if "update_frequency" in self.conversation_data:
+                dialog.update_frequency = self.conversation_data["update_frequency"]
+            
+            # Mostra il dialog in modo non bloccante
+            if dialog.exec_() == QDialog.Accepted:
+                # Usa QTimer per gestire la creazione del prestito in modo asincrono
+                QTimer.singleShot(0, lambda: self._handle_loan_creation(dialog))
+            else:
+                QTimer.singleShot(0, lambda: self.animate_typing("Assistant", "Loan creation cancelled."))
+                
+        except Exception as e:
+            QTimer.singleShot(0, lambda: self.animate_typing("Assistant", f"Error showing loan form: {str(e)}"))
+        finally:
+            # Reset conversation state
+            self.current_conversation_state = None
+            self.conversation_data = {}
+
+    def _handle_loan_creation(self, dialog):
+        """Gestisce la creazione effettiva del prestito"""
+        try:
+            # Ottieni i dati dal dialog
+            loan_data = dialog.get_loan_data()
+            
+            # Crea il prestito
+            loan = Loan(db_manager=self.loan_app.db_manager, **loan_data)
+            
+            # Aggiungilo all'applicazione
+            self.loan_app._add_loan(loan)
+            
+            # Mostra il riepilogo
+            summary = (
+                f"Loan created successfully!\n\n"
+                f"Amount: €{loan.loan_amount:,.2f}\n"
+                f"Rate: {loan.initial_rate * 100:.2f}%\n"
+                f"Term: {loan.initial_term} years\n"
+                f"Type: {loan.amortization_type}\n"
+                f"Frequency: {loan.frequency}\n"
+                f"Monthly Payment: {loan.pmt_str}"
+            )
+            self.animate_typing("Assistant", summary)
+            
+        except Exception as e:
+            self.animate_typing("Assistant", f"Failed to create loan: {str(e)}")
+
+    def _show_full_dialog(self):
+        """Mostra la finestra di dialogo completa per la creazione del prestito"""
+        dialog = LoanDialog(self)
+        
+        # Precompila i campi con i dati della conversazione
+        dialog.rate_entry.setValue(self.conversation_data["rate"])
+        dialog.term_entry.setValue(self.conversation_data["term"])
+        dialog.pv_entry.setValue(self.conversation_data["loan_amount"])
+        dialog.amortization_combobox.setCurrentText(self.conversation_data["amortization_type"])
+        dialog.frequency_combobox.setCurrentText(self.conversation_data["frequency"])
+        dialog.downpayment_entry.setValue(self.conversation_data["downpayment_percent"])
+        
+        # Se ci sono costi aggiuntivi, aggiungili
+        if self.conversation_data.get("additional_costs"):
+            dialog.additional_costs = self.conversation_data["additional_costs"]
+            
+        if dialog.exec_() == QDialog.Accepted:
+            try:
+                loan_data = dialog.get_loan_data()
+                loan = Loan(db_manager=self.loan_app.db_manager, **loan_data)
+                self.loan_app._add_loan(loan)
+                self.animate_typing("Assistant", "Loan created successfully!")
+            except Exception as e:
+                self.animate_typing("Assistant", f"Failed to create loan: {str(e)}")
+
+    def _create_loan_directly(self):
+        """Crea il prestito direttamente con i dati della conversazione"""
+        try:
+            # Prepara i dati del prestito
+            loan_data = {
+                "rate": self.conversation_data["rate"] / 100,  # Converti da percentuale
+                "term": self.conversation_data["term"],
+                "loan_amount": self.conversation_data["loan_amount"],
+                "amortization_type": self.conversation_data["amortization_type"],
+                "frequency": self.conversation_data["frequency"],
+                "downpayment_percent": self.conversation_data["downpayment_percent"]
+            }
+            
+            # Aggiungi parametri opzionali se presenti
+            if "rate_type" in self.conversation_data:
+                loan_data["rate_type"] = self.conversation_data["rate_type"]
+            if "use_euribor" in self.conversation_data:
+                loan_data["use_euribor"] = self.conversation_data["use_euribor"]
+            if "update_frequency" in self.conversation_data:
+                loan_data["update_frequency"] = self.conversation_data["update_frequency"]
+            if "additional_costs" in self.conversation_data:
+                loan_data["additional_costs"] = self.conversation_data["additional_costs"]
+                
+            # Crea e aggiungi il prestito
+            loan = Loan(db_manager=self.loan_app.db_manager, **loan_data)
+            self.loan_app._add_loan(loan)
+            
+            # Mostra conferma con dettagli
+            summary = (
+                f"Loan created successfully!\n\n"
+                f"Amount: €{loan.loan_amount:,.2f}\n"
+                f"Rate: {loan.initial_rate * 100:.2f}%\n"
+                f"Term: {loan.initial_term} years\n"
+                f"Type: {loan.amortization_type}\n"
+                f"Frequency: {loan.frequency}\n"
+                f"Monthly Payment: {loan.pmt_str}"
+            )
+            self.animate_typing("Assistant", summary)
+            
+        except Exception as e:
+            self.animate_typing("Assistant", f"Failed to create loan: {str(e)}")
+
+    def handle_update_loan_conversation(self, user_input):
+        """Gestisce il flusso di conversazione per l'aggiornamento di un prestito"""
+        try:
+            if self.current_conversation_state == "update_loan_field":
+                field_map = {
+                    "1": "rate",
+                    "2": "term",
+                    "3": "loan_amount",
+                    "4": "frequency"
+                }
+                if user_input not in field_map:
+                    raise ValueError("Please select a number between 1 and 4")
+                    
+                self.conversation_data["field"] = field_map[user_input]
+                self.current_conversation_state = "update_loan_value"
+                self.append_message("Assistant", f"Enter new value for {field_map[user_input]}:")
+                
+            elif self.current_conversation_state == "update_loan_value":
+                # Show confirmation dialog
+                dialog = EditLoanDialog(self.conversation_data["loan"], self)
+                
+                field = self.conversation_data["field"]
+                value = float(user_input) if field != "frequency" else user_input
+                
+                if field == "rate":
+                    dialog.rate_entry.setValue(value)
+                elif field == "term":
+                    dialog.term_entry.setValue(int(value))
+                elif field == "loan_amount":
+                    dialog.pv_entry.setValue(value)
+                elif field == "frequency":
+                    dialog.frequency_combobox.setCurrentText(value)
+                    
+                if dialog.exec_() == QDialog.Accepted:
+                    updated_data = dialog.get_updated_loan_data()
+                    self.loan_app._update_loan(self.conversation_data["loan"], updated_data)
+                    self.append_message("Assistant", "Loan updated successfully!")
+                else:
+                    self.append_message("Assistant", "Update cancelled.")
+                    
+                self.current_conversation_state = None
+                self.conversation_data = {}
+                
+        except ValueError as e:
+            self.append_message("Assistant", f"Invalid input: {str(e)}. Please try again.")
+
+    def _handle_backend_action(self, action):
+        """Esegue l'azione del backend"""
+        try:
+            # Usa solo GuiPrintManager per i messaggi
+            with self.GuiPrintManager(self):
+                action()
+        except Exception as e:
+            self.append_message("Assistant", 
+                "I couldn't complete that action.\n" +
+                f"Error details: {str(e)}\n\n" +
+                "Please make sure you have selected a loan if required."
+            )
+
+    def gui_operator_confirmation(self, prompt):
+        """Mostra un QMessageBox per chiedere conferma all'operatore"""
+        reply = QMessageBox.question(self, "Conferma", prompt, QMessageBox.Yes | QMessageBox.No)
+        return reply == QMessageBox.Yes
+
+    class GuiInputManager:
+        """
+        Context manager per intercettare le chiamate a input() e sostituirle
+        con QInputDialog.getText().
+        """
+        def __init__(self, parent):
+            self.parent = parent
+            self.original_input = __builtins__.input
+        def __enter__(self):
+            __builtins__.input = self.gui_input
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            __builtins__.input = self.original_input
+        def gui_input(self, prompt):
+            text, ok = QInputDialog.getText(self.parent, "Input", prompt)
+            if ok:
+                return text
+            else:
+                raise Exception("Input cancelled by user")
+    
+    class GuiPrintManager:
+        """
+        Context manager per intercettare le chiamate a print() e reindirizzare
+        l'output nella cronologia della chat.
+        """
+        def __init__(self, parent):
+            self.parent = parent
+            self.original_print = __builtins__.print
+        def __enter__(self):
+            __builtins__.print = self.gui_print
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            __builtins__.print = self.original_print
+        def gui_print(self, *args, **kwargs):
+            sep = kwargs.get("sep", " ")
+            message = sep.join(str(arg) for arg in args)
+            self.parent.append_message("Assistant", message)
+    
     def append_message(self, sender, message, is_typing=False):
         cursor = self.chat_history.textCursor()
         cursor.movePosition(cursor.End)
@@ -2476,7 +3145,7 @@ class ChatAssistantDialog(FluentDialog):
 
         current_time = time.strftime("%H:%M")
         
-        # Template HTML aggiornato con bordi più arrotondati e stile moderno
+        # Template HTML con bordi arrotondati e stile moderno
         html = f'''
             <div style="
                 margin: 12px 0; 
@@ -2559,39 +3228,36 @@ class ChatAssistantDialog(FluentDialog):
             </div>
         '''
 
-        # Stili CSS aggiornati
-        css = '''
+        css = f'''
             <style>
-                @keyframes fadeIn {
-                    from { 
+                @keyframes fadeIn {{
+                    from {{ 
                         opacity: 0; 
                         transform: translateY(8px);
-                    }
-                    to { 
+                    }}
+                    to {{ 
                         opacity: 1; 
                         transform: translateY(0);
-                    }
-                }
-                .message-bubble {
-                    transform-origin: {'right' if sender == 'User' else 'left'};
-                }
-                .message-bubble:hover {
+                    }}
+                }}
+                .message-bubble {{
+                    transform-origin: {"right" if sender == "User" else "left"};
+                }}
+                .message-bubble:hover {{
                     transform: scale(1.02);
                     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-                }
+                }}
             </style>
         '''
 
-        # Combina HTML e CSS
         content = css + html
-
-        # Inserisci il contenuto nel chat history
         cursor.insertHtml(content)
         
-        # Scorri alla fine
         self.chat_history.verticalScrollBar().setValue(
             self.chat_history.verticalScrollBar().maximum()
         )
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
