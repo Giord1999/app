@@ -4,16 +4,18 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QInputDialog)
+                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame)
 
 
-from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QFont
+from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont
 from PyQt5.QtCore import Qt, QSize, QTimer
 
 
 # Set the backend for matplotlib
 import matplotlib
 matplotlib.use('Qt5Agg')
+
+
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -775,8 +777,10 @@ class LoanDialog(FluentDialog):
     def open_additional_costs_dialog(self):
         dialog = AdditionalCostsDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            self.additional_costs = dialog.get_costs()
-
+            costs = dialog.get_costs()
+            self.additional_costs = costs['additional_costs']
+            self.periodic_expenses = costs['periodic_expenses']
+            
     def get_loan_data(self):
         return {
             "rate": self.rate_entry.value(),
@@ -785,7 +789,8 @@ class LoanDialog(FluentDialog):
             "downpayment_percent": self.downpayment_entry.value(),
             "amortization_type": self.amortization_combobox.currentText(),
             "frequency": self.frequency_combobox.currentText(),
-            "additional_costs": self.additional_costs
+            "additional_costs": self.additional_costs,
+            "periodic_expenses": self.periodic_expenses
         }
 
 class AdditionalCostsDialog(FluentDialog):
@@ -841,19 +846,25 @@ class AdditionalCostsDialog(FluentDialog):
         self.cost_entries.append((cost_name, cost_value))
 
     def get_costs(self):
-        costs = {}
+        one_time_costs = {}
+        periodic_costs = {}
+        
+        # Raccogliere i costi una tantum
         for name_entry, value_entry in self.cost_entries:
             name = name_entry.text().strip()
             value = value_entry.value()
             if name and value > 0:
-                costs[name] = value
+                one_time_costs[name] = value
         
-        periodic_cost = self.periodic_cost_entry.value()
-        if periodic_cost > 0:
-            costs['Periodic Costs'] = periodic_cost
-        return costs
-
-
+        # Raccogliere i costi periodici
+        periodic_value = self.periodic_cost_entry.value()
+        if periodic_value > 0:
+            periodic_costs["Regular Payment Fee"] = periodic_value
+            
+        return {
+            'additional_costs': one_time_costs,
+            'periodic_expenses': periodic_costs
+        }
 class LoanPaymentAnalysisDialog(FluentDialog):
     """Finestra per l'analisi dei pagamenti"""
     def __init__(self, loan, parent=None):
@@ -868,7 +879,7 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         early_payment_widget = QWidget()
         early_layout = QVBoxLayout(early_payment_widget)
         
-        # Extra payment input
+        # Extra payment input 
         early_form = QFormLayout()
         self.extra_payment = QDoubleSpinBox()
         self.extra_payment.setRange(0, 1000000)
@@ -892,6 +903,7 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         # Faster Payment Tab
         faster_payment_widget = QWidget()
         faster_layout = QVBoxLayout(faster_payment_widget)
+
         
         # Years input
         faster_form = QFormLayout()
@@ -914,11 +926,12 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         faster_layout.addLayout(faster_form)
         faster_layout.addWidget(calculate_faster_btn)
         faster_layout.addWidget(self.faster_results)
-        
+
+
+
         # Add tabs
         tab_widget.addTab(early_payment_widget, "Early Payoff Analysis")
         tab_widget.addTab(faster_payment_widget, "Faster Payoff Analysis")
-        
         self.main_layout.insertWidget(0, tab_widget)
         
         # Close button
@@ -935,6 +948,7 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         years = self.years_to_payoff.value()
         result = self.loan.pay_faster(years)
         self.faster_results.setText(result)
+
 
 class AmortizationDialog(FluentDialog):
     def __init__(self, table_data, parent=None):
@@ -1049,7 +1063,7 @@ class EditLoanDialog(FluentDialog):
         # Rate input
         self.rate_entry = QDoubleSpinBox()
         self.rate_entry.setRange(0, 100)
-        self.rate_entry.setDecimals(4)
+        self.rate_entry.setDecimals(6)
         self.rate_entry.setSingleStep(0.001)
         self.rate_entry.setValue(loan.initial_rate)
         form.addRow("Interest Rate (%):", self.rate_entry)
@@ -1480,34 +1494,42 @@ class LoanApp(QMainWindow):
             return
 
         for loan_data in loans_from_db:
-            # Creazione dell'oggetto Loan dai dati del database
-            loan_id, rate, term, amount, amort_type, frequency, rate_type, use_euribor, update_freq, downpayment, start_date, active = loan_data
-            
-            loan = Loan(
-                db_manager=self.db_manager,
-                rate=float(rate),
-                term=int(term),
-                loan_amount=float(amount),
-                amortization_type=amort_type,
-                frequency=frequency,
-                rate_type=rate_type,
-                use_euribor=use_euribor,
-                update_frequency=update_freq,
-                downpayment_percent=float(downpayment),
-                start=start_date.isoformat(),
-                loan_id=str(loan_id),
-                should_save=False  # Evitiamo di salvarlo di nuovo nel DB
-            )
-            
-            self.loans.append(loan)  # Aggiungiamo l'oggetto Loan alla lista
+            try:
+                loan_id = str(loan_data[0])
+                # Carica prima i costi aggiuntivi e le spese periodiche
+                additional_costs = self.db_manager.load_additional_costs(loan_id)
+                periodic_expenses = self.db_manager.load_periodic_expenses(loan_id)
+                
+                # Crea nuovo prestito con tutti i dati
+                loan = Loan(
+                    db_manager=self.db_manager,
+                    rate=float(loan_data[1]),
+                    term=int(loan_data[2]),
+                    loan_amount=float(loan_data[3]),
+                    amortization_type=loan_data[4],
+                    frequency=loan_data[5],
+                    rate_type=loan_data[6],
+                    use_euribor=loan_data[7],
+                    update_frequency=loan_data[8],
+                    downpayment_percent=float(loan_data[9]),
+                    start=loan_data[10].isoformat(),
+                    loan_id=loan_id,
+                    additional_costs=additional_costs,  # Aggiungi i costi qui
+                    periodic_expenses=periodic_expenses,  # Aggiungi le spese qui
+                    should_save=False  # Importante: evita il doppio salvataggio
+                )
+                
+                self.loans.append(loan)
 
-            # Mostra il prestito nella UI
-            loan_text = f"Loan {loan_id} - €{amount:,.2f} ({amort_type})"
-            self.loan_listbox.addItem(loan_text)
+                # Mostra il prestito nella UI
+                loan_text = f"Loan {loan_id} - €{loan_data[3]:,.2f} ({loan_data[4]})"
+                self.loan_listbox.addItem(loan_text)
 
-        print(f"DEBUG: Prestiti caricati nella lista ({len(self.loans)})")
+            except Exception as e:
+                print(f"Error loading loan {loan_data[0]}: {str(e)}")
+                continue
 
-      
+        print(f"DEBUG: Prestiti caricati nella lista ({len(self.loans)})")      
 
     def on_close(self, event):
         """Save all loans before closing"""
@@ -2622,12 +2644,17 @@ class ChatAssistantDialog(QDialog):
                                         "Hello! I'm here to help you manage your loans.",
                                         "Good day! What can I do for you today?"
                                     ])),
+            "thanks": lambda: self.append_message("Assistant",
+                                    np.random.choice([
+                                        "You're welcome!",
+                                        "No problem!",
+                                        "Glad to help!"
+                                    ])),
             "display_loans": lambda: self.show_loans(allow_selection=True),
             "amortization_schedule": lambda: self._handle_amortization(),
             "calculate_taeg": lambda: self._handle_taeg(),
             "compare_loans": lambda: self._handle_compare_loans(),
             "plot_graph": lambda: self._handle_plot()
-            
         }
 
         if intent in intent_actions:
