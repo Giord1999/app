@@ -9,12 +9,6 @@ import seaborn as sns
 import uuid
 import psycopg2
 from scipy.optimize import brentq
-from ecbdata import ecbdata
-
-
-#TODO:implementare i tassi variabili ---> PRIORITY #1. L'idea potrebbe essere quello di integrare un job schedulato che aggiorna periodicamente il tasso di interesse per i prestiti variabili, aggiungendo uno spread
-#TODO: attualmente, nel probabilistic pricing, il default segue una traiettoria deterministica. Sarebbe più corretto utilizzare una variabile aleatoria o distribuzione di probabilità per il default. Attenzione perché bisogna tenere conto di Basilea III quando si parla del rischio. ---> PRIORITY #2
-
 
 
 class DbManager:
@@ -48,7 +42,7 @@ class DbManager:
             with conn.cursor() as cursor:
                 cursor.execute('''CREATE TABLE IF NOT EXISTS loans(
                     loan_id UUID PRIMARY KEY,
-                    initial_rate DECIMAL(5,6) NOT NULL,
+                    initial_rate DECIMAL(8,6) NOT NULL,
                     initial_term INTEGER NOT NULL,
                     loan_amount DECIMAL(15,2) NOT NULL,
                     amortization_type VARCHAR(20) NOT NULL CHECK (amortization_type IN ('French', 'Italian')),
@@ -143,22 +137,22 @@ class DbManager:
                         loan.start.date(), loan.active
                     ))
 
-                # Save additional costs
-                cursor.execute("DELETE FROM additional_costs WHERE loan_id = %s", (loan.loan_id,))
-                for desc, amount in loan.additional_costs.items():
-                    cursor.execute("""
-                        INSERT INTO additional_costs (loan_id, description, amount)
-                        VALUES (%s, %s, %s)
-                    """, (loan.loan_id, desc, float(amount)))
+                    # Save additional costs (one-time costs)
+                    cursor.execute("DELETE FROM additional_costs WHERE loan_id = %s", (loan.loan_id,))
+                    for desc, amount in loan.additional_costs.items():
+                        cursor.execute("""
+                            INSERT INTO additional_costs (loan_id, description, amount)
+                            VALUES (%s, %s, %s)
+                        """, (loan.loan_id, desc, float(amount)))
 
-                # Save periodic expenses
-                cursor.execute("DELETE FROM periodic_expenses WHERE loan_id = %s", (loan.loan_id,))
-                for desc, amount in loan.periodic_expenses.items():
-                    cursor.execute("""
-                        INSERT INTO periodic_expenses (loan_id, description, amount)
-                        VALUES (%s, %s, %s)
-                    """, (loan.loan_id, desc, float(amount)))
-
+                    # Save periodic expenses (recurring costs)
+                    cursor.execute("DELETE FROM periodic_expenses WHERE loan_id = %s", (loan.loan_id,))
+                    for desc, amount in loan.periodic_expenses.items():
+                        cursor.execute("""
+                            INSERT INTO periodic_expenses (loan_id, description, amount)
+                            VALUES (%s, %s, %s)
+                        """, (loan.loan_id, desc, float(amount)))
+                        
                 # Save amortization table
                 cursor.execute("DELETE FROM amortization_schedule WHERE loan_id = %s", (loan.loan_id,))
                 for index, row in loan.table.iterrows():
@@ -290,8 +284,6 @@ class Loan:
         if should_save:
             self.save_to_db()
 
-            # Salva automaticamente nel database
-            self.save_to_db()
 
     def save_to_db(self):
         """Save loan to database"""
@@ -306,6 +298,11 @@ class Loan:
             self.downpayment_percent = float(self.downpayment_percent)
             
             self.db_manager.save_loan(self)
+                        # Ensure costs dictionaries exist
+            if not hasattr(self, 'additional_costs') or self.additional_costs is None:
+                self.additional_costs = {}
+            if not hasattr(self, 'periodic_expenses') or self.periodic_expenses is None:
+                self.periodic_expenses = {}
             return True
         except Exception as e:
             print(f"Error saving loan to database: {str(e)}")
@@ -584,21 +581,26 @@ class Loan:
         self.update_db()
 
     def calculate_taeg(self):
+
         """
         Calcola il TAEG periodico e annualizzato. Il TAEG è il tasso che uguaglia la somma attualizzata
         dei pagamenti periodici (rate lorde) all'importo erogato (prestito netto dopo le spese iniziali).
         """
+        print(f"Additional costs: {self.additional_costs}")
+        print(f"Periodic expenses: {self.periodic_expenses}") 
+        print(f"Loan amount: {self.loan_amount}")
+        print(f"PMT: {self.pmt}")
 
         # Importo del prestito iniziale al netto delle spese iniziali
-        loan_amount = self.loan_amount
-        initial_expenses = sum(self.additional_costs.values())
+        loan_amount = float(self.loan_amount)
+        initial_expenses = float(sum(self.additional_costs.values()))
         net_loan_amount = loan_amount - initial_expenses
 
         # Recupera le spese periodiche dall'attributo periodic_expenses
-        total_periodic_expenses = sum(self.periodic_expenses.values()) if self.periodic_expenses else 0
+        total_periodic_expenses = float(sum(self.periodic_expenses.values())) if self.periodic_expenses else 0
 
         # Pagamento periodico lordo (inclusi eventuali costi periodici)
-        gross_payment = self.pmt + total_periodic_expenses
+        gross_payment = float(self.pmt) + total_periodic_expenses
 
         # Durata del prestito in anni, tenendo conto della frequenza dei pagamenti
         if self.frequency == 'monthly':
@@ -1001,11 +1003,181 @@ class Loan:
         
         return styled
 
+
+    def simulate_loan_monte_carlo(self, n_simulations=1000, extra_payment_prob=0.05, 
+                                extra_payment_amount=500, extra_payment_probs=None, 
+                                late_payment_probs=None):
+        """
+        Simulates loan lifetime considering extra payments and late payments.
+        Returns simulation results instead of plotting directly.
+        
+        Parameters
+        ----------
+        n_simulations : int
+            Number of Monte Carlo simulations
+        extra_payment_prob : float
+            Base probability of making an extra payment
+        extra_payment_amount : float 
+            Amount of extra payment
+        extra_payment_probs : list
+            List of extra payment probabilities to analyze
+        late_payment_probs : list
+            List of late payment probabilities to analyze
+            
+        Returns
+        -------
+        dict
+            Contains simulation results:
+            - 'lifetimes': Array of simulated loan lifetimes
+            - 'extra_payment_rules': Dict of statistics for extra payments
+            - 'late_payment_rules': Dict of statistics for late payments
+        """
+        if extra_payment_probs is None:
+            extra_payment_probs = [0.01, 0.05, 0.1, 0.2]
+        if late_payment_probs is None:
+            late_payment_probs = [0.01, 0.05, 0.1]
+
+        # Base simulation
+        loan_lifetime = np.zeros(n_simulations)
+        for i in range(n_simulations):
+            balance = self.loan_amount
+            n_payments = 0
+            while balance > 0:
+                n_payments += 1
+                
+                # Calculate regular payment components
+                interest_payment = balance * self.rate
+                principal_payment = self.pmt - interest_payment
+                
+                # Apply payment
+                balance -= principal_payment
+                
+                # Check for extra payment
+                if np.random.rand() < extra_payment_prob:
+                    extra_payment = min(balance, extra_payment_amount)
+                    balance -= extra_payment
+
+            loan_lifetime[i] = n_payments / 12
+
+        # Simulate with different extra payment probabilities
+        extra_payment_rules = {}
+        for prob in extra_payment_probs:
+            loan_lifetime_probs = np.zeros(n_simulations)
+            for j in range(n_simulations):
+                balance = self.loan_amount
+                n_payments = 0
+                payment_index = 0
+                
+                while balance > 0 and payment_index < len(self.table):
+                    n_payments += 1
+                    
+                    # Get values from loan table
+                    interest_payment = self.table['Interest'].iloc[payment_index]
+                    principal_payment = self.table['Principal'].iloc[payment_index]
+                    
+                    # Apply regular payment
+                    balance -= principal_payment
+                    
+                    # Check for extra payment after regular payment
+                    if np.random.rand() < prob:
+                        extra_payment = min(balance, extra_payment_amount)
+                        balance -= extra_payment
+                        
+                    payment_index += 1
+
+                loan_lifetime_probs[j] = n_payments / 12
+
+            # Calculate statistics
+            mean = np.mean(loan_lifetime_probs)
+            std = np.std(loan_lifetime_probs)
+            extra_payment_rules[prob] = {
+                '68%': [mean - std, mean + std],
+                '95%': [mean - 2*std, mean + 2*std],
+                '99.7%': [mean - 3*std, mean + 3*std],
+            }
+
+        # Simulate with different late payment probabilities
+        late_payment_rules = {}
+        for prob in late_payment_probs:
+            loan_lifetime_probs = np.zeros(n_simulations)
+            for j in range(n_simulations):
+                balance = self.loan_amount
+                n_payments = 0
+                payment_index = 0
+                
+                while balance > 0 and payment_index < len(self.table):
+                    n_payments += 1
+                    
+                    # Get values from loan table
+                    interest_payment = self.table['Interest'].iloc[payment_index]
+                    principal_payment = self.table['Principal'].iloc[payment_index]
+                    
+                    # Apply regular payment
+                    balance -= principal_payment
+                    
+                    # Check for extra payment after regular payment
+                    if np.random.rand() < prob:
+                        extra_payment = min(balance, extra_payment_amount)
+                        balance -= extra_payment
+                        
+                    payment_index += 1
+
+
+                loan_lifetime_probs[j] = n_payments / 12
+
+            # Calculate statistics
+            mean = np.mean(loan_lifetime_probs)
+            std = np.std(loan_lifetime_probs)
+            late_payment_rules[prob] = {
+                '68%': [mean - std, mean + std],
+                '95%': [mean - 2*std, mean + 2*std],
+                '99.7%': [mean - 3*std, mean + 3*std],
+            }
+
+        return {
+            'lifetimes': loan_lifetime,
+            'extra_payment_rules': extra_payment_rules,
+            'late_payment_rules': late_payment_rules
+        }
+
+    def plot_monte_carlo_results(self, simulation_results):
+        """
+        Plots the results of Monte Carlo simulation.
+        
+        Parameters
+        ----------
+        simulation_results : dict
+            Results from simulate_loan_monte_carlo()
+        """
+        # Plot lifetime distribution
+        plt.figure(figsize=(10, 6))
+        plt.hist(simulation_results['lifetimes'], bins='auto', 
+                alpha=0.7, color='b', edgecolor='black')
+        plt.title('Loan Lifetime Distribution')
+        plt.xlabel('Years')
+        plt.ylabel('Frequency')
+        plt.show()
+
+        # Print statistics for extra payments
+        print("\nExtra Payment Analysis:")
+        for prob, rules in simulation_results['extra_payment_rules'].items():
+            print(f'\nExtra payment probability: {prob:.2%}')
+            for rule, interval in rules.items():
+                print(f'{rule}: [{interval[0]:.2f}, {interval[1]:.2f}] years')
+
+        # Print statistics for late payments
+        print("\nLate Payment Analysis:")
+        for prob, rules in simulation_results['late_payment_rules'].items():
+            print(f'\nLate payment probability: {prob:.2%}')
+            for rule, interval in rules.items():
+                print(f'{rule}: [{interval[0]:.2f}, {interval[1]:.2f}] years')
+
     @classmethod
     def clear_loans(cls):
         """Pulisce la lista dei prestiti in memoria"""
         cls.loans.clear()
         
+
     @classmethod 
     def load_all_loans(cls, db_manager):
         """Carica tutti i prestiti dal database nella lista loans"""
@@ -1017,7 +1189,7 @@ class Loan:
             
             for loan_data in loans_data:
                 try:
-                    # Crea nuovo prestito
+                    # Crea nuovo prestito con should_save=False per evitare il doppio salvataggio
                     loan = cls(
                         db_manager=db_manager,
                         rate=float(loan_data[1]),
@@ -1030,17 +1202,20 @@ class Loan:
                         update_frequency=loan_data[8],
                         downpayment_percent=float(loan_data[9]),
                         start=loan_data[10].isoformat(),
-                        loan_id=str(loan_data[0])
+                        loan_id=str(loan_data[0]),
+                        should_save=False  # Importante: evita il salvataggio durante l'init
                     )
                     
-                    # Carica costi aggiuntivi
+                    # Carica esplicitamente i costi aggiuntivi e le spese periodiche
                     loan.additional_costs = db_manager.load_additional_costs(loan.loan_id)
                     loan.periodic_expenses = db_manager.load_periodic_expenses(loan.loan_id)
                     
-                    # Ricalcola tabella
+                    # Ricalcola tabella e TAEG con i nuovi costi
                     loan.table = loan.loan_table()
+                    loan.calculate_taeg()
                     
-                    # Il prestito viene automaticamente aggiunto alla lista loans nell'__init__
+                    # Aggiungi alla lista dei prestiti
+                    cls.loans.append(loan)
                     
                 except Exception as e:
                     print(f"Error loading loan {loan_data[0]}: {str(e)}")
