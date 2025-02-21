@@ -108,7 +108,10 @@
                 "usa prestito",
                 "seleziona il prestito",
                 "cambia prestito",
-                "prestito numero"
+                "Seleziona un prestito",
+                "Scegli un prestito",
+                "Quale prestito?",
+                "Seleziona il prestito"
             ],
             "responses": [
                 "Inserisci l'ID del prestito che vuoi selezionare."
@@ -118,6 +121,15 @@
         {
             "tag": "payment_analysis", 
             "patterns": [
+                "Analisi dei pagamenti",
+                "Cosa succede se aggiungo un pagamento extra?",
+                "Mostra l'effetto di un pagamento aggiuntivo",
+                "Calcola l'impatto di un pagamento extra",
+                "Come cambia il prestito se aggiungo un pagamento extra?",
+                "Cosa succede se voglio estinguere il prestito prima?",
+                "Calcola l'effetto di un pagamento anticipato",
+                "Mostra l'impatto di un pagamento anticipato",
+                "Come cambia il prestito se estinguo il debito prima?",
                 "analizza pagamenti",
                 "analisi pagamenti",
                 "analisi dei pagamenti",
@@ -131,9 +143,15 @@
         {
             "tag": "plot_graph",
             "patterns": [
+                "Mostrami il grafico",
+                "Visualizza il grafico",
                 "Mostra grafico",
                 "Visualizza grafico", 
                 "Genera grafico",
+                "Mostra il grafico",
+                "Visualizza grafico",
+                "Genera grafico",
+                "Genera il grafico",
                 "Mostra il grafico",
                 "Mostra il grafico del prestito"
             ],
@@ -207,56 +225,11 @@
         },
 
         {
-            "tag": "plot_graph",
-            "patterns": [
-                "Mostra grafico",
-                "Visualizza grafico",
-                "Genera grafico",
-                "Mostra il grafico",
-                "Mostra il grafico del prestito"
-            ],
-            "responses": [
-                "Genero il grafico per il prestito selezionato."
-            ]
-        },
-
-        {
-            "tag": "select_loan",
-            "patterns": [
-                "Seleziona un prestito",
-                "Scegli un prestito",
-                "Quale prestito?"
-            ],
-            "responses": [
-                "Inserisci l'ID del prestito su cui operare."
-            ]
-        },
-
-        {
-            "tag": "payment_analysis",
-            "patterns": [
-                "Analisi dei pagamenti",
-                "Cosa succede se aggiungo un pagamento extra?",
-                "Mostra l'effetto di un pagamento aggiuntivo",
-                "Calcola l'impatto di un pagamento extra",
-                "Come cambia il prestito se aggiungo un pagamento extra?",
-                "Cosa succede se voglio estinguere il prestito prima?",
-                "Calcola l'effetto di un pagamento anticipato",
-                "Mostra l'impatto di un pagamento anticipato",
-                "Come cambia il prestito se estinguo il debito prima?"
-            ],
-
-            "responses": [
-                "Eseguo l'analisi dei pagamenti."
-            ]
-        },
-
-        {
             "tag": "pricing_analysis",
             "patterns": [
                 "Fai un'analisi di pricing",
                 "Calcola il pricing probabilistico",
-                "Esegui una simulazione Monte Carlo"
+                "Esegui simulazione pricing"
             ],
             "responses": [
                 "Eseguo l'analisi di pricing probabilistico."
@@ -280,21 +253,11 @@
             "patterns": [
                 "Visualizza tutti i prestiti",
                 "Mostrami i prestiti",
+                "Mostra i prestiti salvati",
                 "Elenca i prestiti salvati"
             ],
             "responses": [
                 "Ecco la lista dei prestiti salvati nel database."
-            ]
-        },
-        {
-            "tag": "select_loan",
-            "patterns": [
-                "Seleziona un prestito",
-                "Scegli un prestito",
-                "Quale prestito?"
-            ],
-            "responses": [
-                "Inserisci l'indice o l'ID del prestito su cui operare."
             ]
         }
     ]
