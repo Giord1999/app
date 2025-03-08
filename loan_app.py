@@ -88,112 +88,56 @@ class FluentStylesheet:
                 background-color: #0078d4;
                 color: white;
                 border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-size: 12pt;
-                min-width: 80px;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-size: 11pt;
+                min-width: 60px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+                transition: background-color 0.2s, box-shadow 0.2s;
             }
             
             QPushButton:hover {
                 background-color: #106ebe;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
             }
             
             QPushButton:pressed {
                 background-color: #005a9e;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
             }
             
             QPushButton:disabled {
                 background-color: #cccccc;
+                box-shadow: none;
             }
-            
-            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
-                border: 1px solid #d1d1d1;
-                border-radius: 4px;
-                padding: 5px;
-                background-color: white;
-                min-height: 25px;
-            }
-            
-            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
-                border-color: #0078d4;
-            }
-            
-            QComboBox::drop-down {
+             
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
                 border: none;
-                width: 20px;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-size: 11pt;
+                min-width: 60px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+                transition: background-color 0.2s, box-shadow 0.2s;
             }
             
-            QComboBox::down-arrow {
-                image: url(assets/dropdown_arrow.png);
-                width: 12px;
-                height: 12px;
+            QPushButton:hover {
+                background-color: #106ebe;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
             }
             
-            QListWidget {
-                border: 1px solid #e0e0e0;
-                border-radius: 4px;
-                background-color: white;
-                padding: 4px;
+            QPushButton:pressed {
+                background-color: #005a9e;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
             }
             
-            QListWidget::item {
-                height: 28px;
-                padding: 4px;
-                border-radius: 4px;
-            }
-            
-            QListWidget::item:selected {
-                background-color: #e5f3ff;
-                color: black;
-            }
-            
-            QListWidget::item:hover {
-                background-color: #f5f5f5;
-            }
-            
-            QTableWidget {
-                border: 1px solid #e0e0e0;
-                border-radius: 4px;
-                background-color: white;
-                gridline-color: #f0f0f0;
-            }
-            
-            QTableWidget::item {
-                padding: 4px;
-            }
-            
-            QTableWidget::item:selected {
-                background-color: #e5f3ff;
-                color: black;
-            }
-            
-            QHeaderView::section {
-                background-color: #f8f8f8;
-                padding: 4px;
-                border: none;
-                border-right: 1px solid #e0e0e0;
-                border-bottom: 1px solid #e0e0e0;
-            }
-            
-            QScrollBar:vertical {
-                border: none;
-                background-color: #f8f8f8;
-                width: 14px;
-                margin: 0px;
-            }
-            
-            QScrollBar::handle:vertical {
-                background-color: #c1c1c1;
-                min-height: 30px;
-                border-radius: 7px;
-                margin: 2px;
-            }
-            
-            QScrollBar::handle:vertical:hover {
-                background-color: #a8a8a8;
+            QPushButton:disabled {
+                background-color: #cccccc;
+                box-shadow: none;
             }
         """
-
 
 class ThemeManager:
     """Classe per la gestione dei temi"""
@@ -773,6 +717,7 @@ class LoanDialog(FluentDialog):
         self.button_layout.addWidget(self.create_button)
         
         self.additional_costs = {}
+        self.periodic_expenses = {}
 
     def open_additional_costs_dialog(self):
         dialog = AdditionalCostsDialog(self)
@@ -789,8 +734,8 @@ class LoanDialog(FluentDialog):
             "downpayment_percent": self.downpayment_entry.value(),
             "amortization_type": self.amortization_combobox.currentText(),
             "frequency": self.frequency_combobox.currentText(),
-            "additional_costs": self.additional_costs,
-            "periodic_expenses": self.periodic_expenses
+            "additional_costs": self.additional_costs or {},
+            "periodic_expenses": self.periodic_expenses or {}
         }
 
 class AdditionalCostsDialog(FluentDialog):
