@@ -1,4 +1,3 @@
-import requests
 import numpy as np
 import numpy_financial as npf
 import pandas as pd
@@ -8,9 +7,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import uuid
 import psycopg2
+from scipy import stats
 from scipy.optimize import brentq
+import random
+from ecbdata import ecbdata
+from datetime import datetime 
 
-#TODO: implementare tassi variabili
+#TODO: sistemare la logica di matematica finanziaria per i calcoli relativi ai tassi variabili
 
 class DbManager:
     def __init__(self, dbname, user, password, host='localhost', port='5432'):
@@ -138,22 +141,22 @@ class DbManager:
                         loan.start.date(), loan.active
                     ))
 
-                    # Save additional costs (one-time costs)
-                    cursor.execute("DELETE FROM additional_costs WHERE loan_id = %s", (loan.loan_id,))
-                    for desc, amount in loan.additional_costs.items():
-                        cursor.execute("""
-                            INSERT INTO additional_costs (loan_id, description, amount)
-                            VALUES (%s, %s, %s)
-                        """, (loan.loan_id, desc, float(amount)))
+                # Save additional costs (one-time costs) - moved outside if/else
+                cursor.execute("DELETE FROM additional_costs WHERE loan_id = %s", (loan.loan_id,))
+                for desc, amount in loan.additional_costs.items():
+                    cursor.execute("""
+                        INSERT INTO additional_costs (loan_id, description, amount)
+                        VALUES (%s, %s, %s)
+                    """, (loan.loan_id, desc, float(amount)))
 
-                    # Save periodic expenses (recurring costs)
-                    cursor.execute("DELETE FROM periodic_expenses WHERE loan_id = %s", (loan.loan_id,))
-                    for desc, amount in loan.periodic_expenses.items():
-                        cursor.execute("""
-                            INSERT INTO periodic_expenses (loan_id, description, amount)
-                            VALUES (%s, %s, %s)
-                        """, (loan.loan_id, desc, float(amount)))
-                        
+                # Save periodic expenses (recurring costs) - moved outside if/else
+                cursor.execute("DELETE FROM periodic_expenses WHERE loan_id = %s", (loan.loan_id,))
+                for desc, amount in loan.periodic_expenses.items():
+                    cursor.execute("""
+                        INSERT INTO periodic_expenses (loan_id, description, amount)
+                        VALUES (%s, %s, %s)
+                    """, (loan.loan_id, desc, float(amount)))
+                    
                 # Save amortization table
                 cursor.execute("DELETE FROM amortization_schedule WHERE loan_id = %s", (loan.loan_id,))
                 for index, row in loan.table.iterrows():
@@ -175,8 +178,6 @@ class DbManager:
                 conn.rollback()
                 print(f"Error saving loan: {str(e)}")
                 raise
-            
-
 
     def delete_loan(self, loan_id):
         try:
@@ -251,7 +252,7 @@ class DbManager:
 class Loan:
     loans = []
 
-    def __init__(self, db_manager, rate, term, loan_amount, amortization_type, frequency, rate_type='fixed', use_euribor=False, update_frequency='monthly', downpayment_percent=0, additional_costs=None, periodic_expenses=None, start=dt.date.today().isoformat(), loan_id=None, should_save=True):
+    def __init__(self, db_manager, rate, term, loan_amount, amortization_type, frequency, rate_type='fixed', use_euribor=False, update_frequency='monthly', downpayment_percent=0, additional_costs=None, periodic_expenses=None, start=dt.date.today().isoformat(), loan_id=None, should_save=True, euribor_spread=0.0):
         self.loan_id = loan_id or str(uuid.uuid4())
         self.initial_rate = rate
         self.initial_term = term
@@ -264,8 +265,8 @@ class Loan:
         self.rate_type = rate_type
         self.use_euribor = use_euribor
         self.update_frequency = update_frequency
+        self.euribor_spread = euribor_spread 
         self.periods = self.calculate_periods()
-        self.euribor_rates = self.get_euribor_rates_api() if self.use_euribor else {}
         self.rate = self.calculate_rate()
         self.pmt = abs(npf.pmt(self.rate, self.periods, self.loan_amount))
         self.pmt_str = f"€ {self.pmt:,.2f}"
@@ -346,35 +347,6 @@ class Loan:
             print("Errore: Nessun database manager associato a Loan!")
 
 
-    def get_euribor_rates_api(self):
-        """Ottiene i tassi Euribor utilizzando l'API della BCE."""
-        base_url = "https://sdw-wsrest.ecb.europa.eu/service/data/FM/"
-        euribor_codes = {
-            '1m': "FM.B.U2.EUR.RT.MM.EURIBOR1MD.IR.M",
-            '3m': "FM.B.U2.EUR.RT.MM.EURIBOR3MD.IR.M",
-            '6m': "FM.B.U2.EUR.RT.MM.EURIBOR6MD.IR.M",
-            '12m': "FM.B.U2.EUR.RT.MM.EURIBOR1YD.IR.M"
-        }
-        rates = {}
-
-        for key, code in euribor_codes.items():
-            try:
-                url = f"{base_url}{code}?format=jsondata"
-                response = requests.get(url)
-                if response.status_code == 200:
-                    data = response.json()
-                    observations = data["dataSets"][0]["series"]["0:0:0:0"]["observations"]
-                    latest_date = max(observations.keys())
-                    latest_rate = float(observations[latest_date][0])
-                    rates[key] = latest_rate / 100  # Convertire in formato decimale
-                    print(f"Tasso Euribor {key}: {latest_rate}% (aggiornato al {latest_date})")
-                else:
-                    print(f"Errore nella richiesta per {key}: {response.status_code}")
-            except Exception as e:
-                print(f"Errore durante il recupero del tasso Euribor {key}: {e}")
-                rates[key] = self.initial_rate / 12  # Fallback in caso di errore
-
-        return rates
 
     def calculate_periods(self):
         if self.frequency == 'monthly':
@@ -388,36 +360,155 @@ class Loan:
         else:
             raise ValueError("Unsupported frequency")
 
-    def calculate_rate(self):
-        if self.rate_type == 'fixed':
-            if self.frequency == 'monthly':
-                return self.initial_rate / 12
-            elif self.frequency == 'quarterly':
-                return self.initial_rate / 4
-            elif self.frequency == 'semi-annual':
-                return self.initial_rate / 2
-            elif self.frequency == 'annual':
-                return self.initial_rate
-            else:
-                raise ValueError("Unsupported frequency")
 
-        elif self.rate_type == 'variable':
-            if self.use_euribor:
-                if self.update_frequency == 'monthly':
-                    euribor_rate = self.euribor_rates.get('1m', self.initial_rate)
-                elif self.update_frequency == 'quarterly':
-                    euribor_rate = self.euribor_rates.get('3m', self.initial_rate)
-                elif self.update_frequency == 'semi-annual':
-                    euribor_rate = self.euribor_rates.get('6m', self.initial_rate)
-                elif self.update_frequency == 'annual':
-                    euribor_rate = self.euribor_rates.get('12m', self.initial_rate)
-                else:
-                    raise ValueError("Unsupported update frequency")
-                return euribor_rate / 12  # Assuming monthly updates for variable rate
-            else:
-                return self.initial_rate / 12
+    def calculate_rate(self):
+        if self.frequency == 'monthly':
+            factor = 12
+        elif self.frequency == 'quarterly':
+            factor = 4
+        elif self.frequency == 'semi-annual':
+            factor = 2
+        elif self.frequency == 'annual':
+            factor = 1
         else:
-            raise ValueError("Unsupported rate type")
+            raise ValueError("Unsupported frequency")
+        
+        if self.rate_type == 'fixed':
+            return self.initial_rate / factor
+        elif self.rate_type == 'variable' and self.use_euribor:
+            # Per i prestiti a tasso variabile, utilizziamo il tasso iniziale ma il piano 
+            # di ammortamento completo sarà calcolato usando dati Euribor nel metodo loan_table()
+            return self.initial_rate / factor
+        else:
+            raise ValueError("Unsupported rate type or Euribor configuration")
+
+    # Mappa dei codici serie in base alla frequenza
+    SERIES_CODES = {
+        'monthly': 'FM.M.U2.EUR.RT.MM.EURIBOR1MD_.HSTA',
+        'quarterly': 'FM.M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA',
+        'semi-annual': 'FM.M.U2.EUR.RT.MM.EURIBOR6MD_.HSTA',
+        'annual': 'FM.M.U2.EUR.RT.MM.EURIBOR1YD_.HSTA'
+    }
+
+    @staticmethod
+    def format_date(date: pd.Timestamp, frequency: str) -> str:
+        """
+        Formattta la data secondo la frequenza richiesta.
+        - monthly: 'YYYY-MM'
+        - quarterly: 'YYYY-Qx'
+        - semi-annual: 'YYYY-S1' oppure 'YYYY-S2'
+        - annual: 'YYYY'
+        """
+        if frequency == 'monthly':
+            return date.strftime('%Y-%m')
+        elif frequency == 'quarterly':
+            quarter = (date.month - 1) // 3 + 1
+            return f"{date.year}-Q{quarter}"
+        elif frequency == 'semi-annual':
+            semi = 'S1' if date.month <= 6 else 'S2'
+            return f"{date.year}-{semi}"
+        elif frequency == 'annual':
+            return date.strftime('%Y')
+        else:
+            raise ValueError("Frequenza non supportata")
+
+    @staticmethod
+    def get_euribor_series(frequency: str, start: str, end: str) -> pd.DataFrame:
+        """
+        Scarica la serie storica dell'Euribor in base alla frequenza.
+        
+        I formati di start e end vengono adattati:
+        - monthly: 'YYYY-MM'
+        - quarterly: 'YYYY-Qx'
+        - semi-annual: 'YYYY-Sx'
+        - annual: 'YYYY'
+        
+        Parametri:
+        frequency: una stringa tra 'monthly', 'quarterly', 'semi-annual', 'annual'
+        start: data iniziale (in un formato riconoscibile, ad es. '1994-01-01')
+        end: data finale (in un formato riconoscibile)
+        
+        Ritorna un DataFrame con le colonne 'TIME_PERIOD' e 'OBS_VALUE' (i tassi in formato decimale).
+        """
+        series_code = Loan.SERIES_CODES.get(frequency)
+        if series_code is None:
+            raise ValueError("Frequenza non supportata. Scegli tra: monthly, quarterly, semi-annual, annual.")
+        
+        # Converti le date in pd.Timestamp e formatta in base alla frequenza
+        start_ts = pd.to_datetime(start)
+        end_ts = pd.to_datetime(end)
+        start_str = Loan.format_date(start_ts, frequency)
+        end_str = Loan.format_date(end_ts, frequency)
+        
+        # Scarica i dati utilizzando ecbdata
+        data = ecbdata.get_series(series_code, start=start_str, end=end_str)
+        data = data[['TIME_PERIOD', 'OBS_VALUE']]
+        data['OBS_VALUE'] = data['OBS_VALUE'] / 100  # conversione in formato decimale
+        data['TIME_PERIOD'] = pd.to_datetime(data['TIME_PERIOD'])
+        return data
+
+    @staticmethod
+    def fit_best_distribution(data: pd.Series):
+        """
+        Adatta diverse distribuzioni (Normale, Lognormale, Gamma, Beta, Cauchy, t) alla serie storica e ne sceglie la migliore
+        in base al test KS.
+        
+        Parametri:
+        data: Serie di tassi storici
+        
+        Ritorna:
+        (best_dist, best_params): la distribuzione scelta e i relativi parametri stimati.
+        """
+        distributions = [stats.norm, stats.lognorm, stats.gamma, stats.beta, stats.cauchy, stats.t]
+        best_dist = None
+        best_params = None
+        best_ks_stat = float('inf')
+        
+        for dist in distributions:
+            try:
+                params = dist.fit(data)
+                ks_stat, _ = stats.kstest(data, dist.name, args=params)
+                # Stampa di debug (opzionale)
+                print(f"{dist.name}: ks_stat={ks_stat}")
+                if ks_stat < best_ks_stat:
+                    best_ks_stat = ks_stat
+                    best_dist = dist
+                    best_params = params
+            except Exception as e:
+                print(f"Errore nell'adattamento della distribuzione {dist.name}: {e}")
+                continue
+        return best_dist, best_params
+
+    @staticmethod
+    def generate_variable_rates_with_spread(initial_rate: float, periods: int, dist, params, 
+                                        historical_median: float, spread: float = 0.0, seed: int = None):
+        """
+        Genera una sequenza di tassi variabili con l'aggiunta di uno spread.
+        
+        Parametri:
+        initial_rate: il tasso euribor corrente (in formato decimale)
+        periods: numero totale di periodi
+        dist: la distribuzione statistica scelta
+        params: i parametri della distribuzione
+        historical_median: mediana dei tassi storici (da utilizzare in caso di tasso negativo)
+        spread: spread da aggiungere al tasso Euribor (in decimale, es: 0.01 = 1%)
+        seed: seme per la generazione casuale
+        
+        Ritorna:
+        Una lista di tassi (float) di lunghezza 'periods' con spread applicato.
+        """
+        rng = np.random.default_rng(seed)
+        base_rates = [initial_rate]
+        for _ in range(periods - 1):
+            new_rate = dist.rvs(*params, size=1, random_state=rng)[0]
+            # Se il tasso generato è negativo, usa la mediana della serie storica
+            if new_rate < 0:
+                new_rate = historical_median
+            base_rates.append(new_rate)
+        
+        # Applica lo spread a ogni tasso
+        return [rate + spread for rate in base_rates]
+
 
     def loan_table(self):
         if self.frequency == 'monthly':
@@ -425,36 +516,133 @@ class Loan:
         elif self.frequency == 'quarterly':
             periods = [self.start + relativedelta(months=3 * x) for x in range(self.periods)]
         elif self.frequency == 'semi-annual':
-            periods = [self.start + relativedelta(months=6 * x) for x in range(self.periods)]
+            periods = [self.start + relativedelta(months=6 * x) for x in range (self.periods)]
         elif self.frequency == 'annual':
             periods = [self.start + relativedelta(years=x) for x in range(self.periods)]
         else:
             raise ValueError("Unsupported frequency")
-
-        if self.amortization_type == "French":
-            interest = [npf.ipmt(self.rate, month, self.periods, -self.loan_amount)
-                        for month in range(1, self.periods + 1)]
         
-            principal = [npf.ppmt(self.rate, month, self.periods, -self.loan_amount)
-                        for month in range(1, self.periods + 1)]
+        if self.rate_type == 'fixed':
+            if self.amortization_type == "French":
+                interest = [npf.ipmt(self.rate, month, self.periods, -self.loan_amount)
+                            for month in range(1, self.periods + 1)]
             
-            balance = [self.loan_amount - sum(principal[:x]) for x in range(1, self.periods + 1)]
+                principal = [npf.ppmt(self.rate, month, self.periods, -self.loan_amount)
+                            for month in range(1, self.periods + 1)]
+                
+                balance = [self.loan_amount - sum(principal[:x]) for x in range(1, self.periods + 1)]
 
-            table = pd.DataFrame({
-                'Initial Debt': [self.loan_amount] + balance[:-1],
-                'Payment': [self.pmt] * self.periods,
-                'Interest': interest,
-                'Principal': principal,
-                'Balance': balance
-            }, index=pd.to_datetime(periods))
+                table = pd.DataFrame({
+                    'Initial Debt': [self.loan_amount] + balance[:-1],
+                    'Payment': [self.pmt] * self.periods,
+                    'Interest': interest,
+                    'Principal': principal,
+                    'Balance': balance
+                }, index=pd.to_datetime(periods))
 
-        elif self.amortization_type == "Italian":
-            principal_payment = self.loan_amount / self.periods
-            interest = [(self.loan_amount - principal_payment * x) * self.rate for x in range(self.periods)]
-            principal = [principal_payment] * self.periods
-            payment = [interest[x] + principal[x] for x in range(self.periods)]
-            balance = [self.loan_amount - sum(principal[:x+1]) for x in range(self.periods)]
+            elif self.amortization_type == "Italian":
+                principal_payment = self.loan_amount / self.periods
+                interest = [(self.loan_amount - principal_payment * x) * self.rate for x in range(self.periods)]
+                principal = [principal_payment] * self.periods
+                payment = [interest[x] + principal[x] for x in range(self.periods)]
+                balance = [self.loan_amount - sum(principal[:x+1]) for x in range(self.periods)]
 
+                table = pd.DataFrame({
+                    'Initial Debt': [self.loan_amount] + balance[:-1],
+                    'Payment': payment,
+                    'Interest': interest,
+                    'Principal': principal,
+                    'Balance': balance
+                }, index=pd.to_datetime(periods))
+
+            else:
+                raise ValueError("Unsupported amortization type")
+            return table.round(2)
+
+        elif self.rate_type == 'variable' and self.use_euribor:
+            start_date = '1994-01-01'  # Data iniziale per un dataset storico significativo
+            end_date = dt.datetime.now().strftime('%Y-%m-%d')
+            euribor_data = self.get_euribor_series(self.frequency, start_date, end_date)
+            
+            # Verifica disponibilità dati Euribor
+            if euribor_data.empty:
+                raise ValueError(f"Nessun dato Euribor disponibile per la frequenza {self.frequency}")
+            
+            # Calcola il tasso corrente e parametri statistici
+            current_euribor_rate = euribor_data['OBS_VALUE'].iloc[-1]
+            historical_median = euribor_data['OBS_VALUE'].median()
+            best_dist, best_params = self.fit_best_distribution(euribor_data['OBS_VALUE'])
+            
+            # Per la prima rata utilizziamo l'ultimo valore Euribor noto più lo spread
+            first_rate = current_euribor_rate + self.euribor_spread
+            
+            # Per le rate successive, generiamo i tassi in modo stocastico
+            if self.periods > 1:
+                # Genera tassi solo per i periodi successivi al primo
+                future_rates = self.generate_variable_rates_with_spread(
+                    current_euribor_rate, self.periods - 1, best_dist, best_params,
+                    historical_median, self.euribor_spread, seed=42)
+                
+                # Combina il primo tasso noto con i tassi generati per i periodi successivi
+                variable_rates = [first_rate] + future_rates
+            else:
+                # Se c'è un solo periodo, usiamo solo il tasso corrente
+                variable_rates = [first_rate]
+            
+            # Calcola il piano di ammortamento in base al tipo
+            if self.amortization_type == "French":
+                # Metodo Francese (a rata costante per ogni tasso)
+                balance = [self.loan_amount]
+                interest = []
+                principal = []
+                payment = []
+                
+                for i in range(self.periods):
+                    period_rate = variable_rates[i]
+                    remaining_periods = self.periods - i
+                    
+                    # Ricalcolo della rata in base al tasso corrente e al capitale residuo
+                    # Questo è il principio fondamentale: ad ogni variazione di tasso,
+                    # si calcola una nuova rata che estingue esattamente il debito residuo
+                    period_payment = abs(npf.pmt(period_rate, remaining_periods, -balance[i]))
+                    
+                    # Calcolo delle componenti della rata
+                    period_interest = period_rate * balance[i]
+                    period_principal = period_payment - period_interest
+                    period_balance = balance[i] - period_principal
+                    
+                    # Accumulo dei valori
+                    payment.append(period_payment)
+                    interest.append(period_interest)
+                    principal.append(period_principal)
+                    balance.append(period_balance)
+                
+                # Rimozione dell'elemento extra dalla lista balance
+                balance.pop()
+                
+            elif self.amortization_type == "Italian":
+                # Metodo Italiano (quota capitale costante)
+                balance = [self.loan_amount]
+                # La quota capitale è costante per definizione
+                principal_payment = self.loan_amount / self.periods
+                principal = [principal_payment] * self.periods
+                
+                # Generazione dei saldi rimanenti
+                for i in range(self.periods):
+                    balance.append(balance[i] - principal_payment)
+                
+                # Rimozione dell'elemento extra dalla lista balance
+                balance.pop()
+                
+                # La quota interessi varia in base al saldo e al tasso periodico
+                interest = [(balance[i] * variable_rates[i]) for i in range(self.periods)]
+                # La rata è semplicemente la somma di quota capitale e quota interessi
+                payment = [interest[i] + principal[i] for i in range(self.periods)]
+                
+            else:
+                raise ValueError("Unsupported amortization type")
+            
+            # Creazione della tabella di ammortamento
             table = pd.DataFrame({
                 'Initial Debt': [self.loan_amount] + balance[:-1],
                 'Payment': payment,
@@ -462,22 +650,12 @@ class Loan:
                 'Principal': principal,
                 'Balance': balance
             }, index=pd.to_datetime(periods))
-
+            
+            return table.round(2)
         else:
-            raise ValueError("Unsupported amortization type")
+            raise ValueError("Unsupported rate type or Euribor configuration")
 
-        return table.round(2)
 
-    def update_variable_rate(self):
-        """Aggiorna il tasso variabile in base al tasso Euribor più recente."""
-        if self.rate_type == 'variable' and self.use_euribor:
-            self.euribor_rates = self.get_euribor_rates_api()
-            self.rate = self.calculate_rate()
-            self.pmt = abs(npf.pmt(self.rate, self.periods, self.loan_amount))
-            self.pmt_str = f"€ {self.pmt:,.2f}"
-            self.table = self.loan_table()
-        else:
-            raise ValueError("Cannot update rate for fixed rate loans or non-EURIBOR variable rate loans")
 
     def plot_balances(self):
         amort = self.loan_table()
@@ -566,7 +744,9 @@ class Loan:
                 f'Total payment: €{self.pmt + extra_pmt:.2f}, '
                 f'New term: {int(new_periods)} {self.frequency} ({new_years:.2f} years)')
 
-    def edit_loan(self, new_rate, new_term, new_loan_amount, new_amortization_type, new_frequency, new_downpayment_percent):
+    def edit_loan(self, new_rate, new_term, new_loan_amount, new_amortization_type, 
+                new_frequency, new_downpayment_percent, new_rate_type='fixed', 
+                new_use_euribor=False, new_update_frequency=None, new_euribor_spread=0.0):
         self.initial_rate = new_rate
         self.initial_term = new_term
         self.downpayment_percent = new_downpayment_percent
@@ -574,6 +754,10 @@ class Loan:
         self.loan_amount = new_loan_amount - self.downpayment
         self.amortization_type = new_amortization_type
         self.frequency = new_frequency
+        self.rate_type = new_rate_type
+        self.use_euribor = new_use_euribor
+        self.update_frequency = new_update_frequency
+        self.euribor_spread = new_euribor_spread
         self.periods = self.calculate_periods()
         self.rate = self.calculate_rate()
         self.pmt = abs(npf.pmt(self.rate, self.periods, self.loan_amount))
