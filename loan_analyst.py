@@ -264,6 +264,16 @@ class Loan:
         self.frequency = frequency
         self.rate_type = rate_type
         self.use_euribor = use_euribor
+        if self.rate_type == 'variable' and self.use_euribor:
+            start_date = '1994-01-01'
+            end_date = dt.datetime.now().strftime('%Y-%m-%d')
+            euribor_data = Loan.get_euribor_series(frequency, start_date, end_date)
+            if not euribor_data.empty:
+                rate = euribor_data['OBS_VALUE'].iloc[-1]
+            else:
+                print("WARN: Nessun dato Euribor disponibile. Utilizzo il tasso inserito.")
+        self.initial_rate = rate
+
         self.update_frequency = update_frequency
         self.euribor_spread = euribor_spread 
         self.periods = self.calculate_periods()
@@ -558,100 +568,147 @@ class Loan:
             else:
                 raise ValueError("Unsupported amortization type")
             return table.round(2)
+        
 
         elif self.rate_type == 'variable' and self.use_euribor:
-            start_date = '1994-01-01'  # Data iniziale per un dataset storico significativo
-            end_date = dt.datetime.now().strftime('%Y-%m-%d')
-            euribor_data = self.get_euribor_series(self.frequency, start_date, end_date)
-            
-            # Verifica disponibilità dati Euribor
-            if euribor_data.empty:
-                raise ValueError(f"Nessun dato Euribor disponibile per la frequenza {self.frequency}")
-            
-            # Calcola il tasso corrente e parametri statistici
-            current_euribor_rate = euribor_data['OBS_VALUE'].iloc[-1]
-            historical_median = euribor_data['OBS_VALUE'].median()
-            best_dist, best_params = self.fit_best_distribution(euribor_data['OBS_VALUE'])
-            
-            # Per la prima rata utilizziamo l'ultimo valore Euribor noto più lo spread
-            first_rate = current_euribor_rate + self.euribor_spread
-            
-            # Per le rate successive, generiamo i tassi in modo stocastico
-            if self.periods > 1:
-                # Genera tassi solo per i periodi successivi al primo
-                future_rates = self.generate_variable_rates_with_spread(
-                    current_euribor_rate, self.periods - 1, best_dist, best_params,
-                    historical_median, self.euribor_spread, seed=42)
-                
-                # Combina il primo tasso noto con i tassi generati per i periodi successivi
-                variable_rates = [first_rate] + future_rates
-            else:
-                # Se c'è un solo periodo, usiamo solo il tasso corrente
-                variable_rates = [first_rate]
-            
-            # Calcola il piano di ammortamento in base al tipo
-            if self.amortization_type == "French":
-                # Metodo Francese (a rata costante per ogni tasso)
-                balance = [self.loan_amount]
-                interest = []
-                principal = []
-                payment = []
-                
-                for i in range(self.periods):
-                    period_rate = variable_rates[i]
-                    remaining_periods = self.periods - i
+                    start_date = '1994-01-01'  # Data iniziale per un dataset storico significativo
+                    end_date = dt.datetime.now().strftime('%Y-%m-%d')
+                    euribor_data = self.get_euribor_series(self.frequency, start_date, end_date)
                     
-                    # Ricalcolo della rata in base al tasso corrente e al capitale residuo
-                    # Questo è il principio fondamentale: ad ogni variazione di tasso,
-                    # si calcola una nuova rata che estingue esattamente il debito residuo
-                    period_payment = abs(npf.pmt(period_rate, remaining_periods, -balance[i]))
+                    # Verifica disponibilità dati Euribor
+                    if euribor_data.empty:
+                        raise ValueError(f"Nessun dato Euribor disponibile per la frequenza {self.frequency}")
                     
-                    # Calcolo delle componenti della rata
-                    period_interest = period_rate * balance[i]
-                    period_principal = period_payment - period_interest
-                    period_balance = balance[i] - period_principal
+                    # Calcola il tasso corrente e parametri statistici
+                    current_euribor_rate = euribor_data['OBS_VALUE'].iloc[-1]
+                    historical_median = euribor_data['OBS_VALUE'].median()
+                    best_dist, best_params = self.fit_best_distribution(euribor_data['OBS_VALUE'])
                     
-                    # Accumulo dei valori
-                    payment.append(period_payment)
-                    interest.append(period_interest)
-                    principal.append(period_principal)
-                    balance.append(period_balance)
-                
-                # Rimozione dell'elemento extra dalla lista balance
-                balance.pop()
-                
-            elif self.amortization_type == "Italian":
-                # Metodo Italiano (quota capitale costante)
-                balance = [self.loan_amount]
-                # La quota capitale è costante per definizione
-                principal_payment = self.loan_amount / self.periods
-                principal = [principal_payment] * self.periods
-                
-                # Generazione dei saldi rimanenti
-                for i in range(self.periods):
-                    balance.append(balance[i] - principal_payment)
-                
-                # Rimozione dell'elemento extra dalla lista balance
-                balance.pop()
-                
-                # La quota interessi varia in base al saldo e al tasso periodico
-                interest = [(balance[i] * variable_rates[i]) for i in range(self.periods)]
-                # La rata è semplicemente la somma di quota capitale e quota interessi
-                payment = [interest[i] + principal[i] for i in range(self.periods)]
-                
-            else:
-                raise ValueError("Unsupported amortization type")
-            
-            # Creazione della tabella di ammortamento
-            table = pd.DataFrame({
-                'Initial Debt': [self.loan_amount] + balance[:-1],
-                'Payment': payment,
-                'Interest': interest,
-                'Principal': principal,
-                'Balance': balance
-            }, index=pd.to_datetime(periods))
-            
-            return table.round(2)
+                    # Genera le date dei periodi in base alla frequenza
+                    if self.frequency == 'monthly':
+                        periods_dates = [self.start + relativedelta(months=x) for x in range(self.periods)]
+                    elif self.frequency == 'quarterly':
+                        periods_dates = [self.start + relativedelta(months=3 * x) for x in range(self.periods)]
+                    elif self.frequency == 'semi-annual':
+                        periods_dates = [self.start + relativedelta(months=6 * x) for x in range(self.periods)]
+                    elif self.frequency == 'annual':
+                        periods_dates = [self.start + relativedelta(years=x) for x in range(self.periods)]
+                    else:
+                        raise ValueError("Unsupported frequency")
+                    
+                    # Per la prima rata utilizziamo l'ultimo valore Euribor noto più lo spread
+                    first_rate = current_euribor_rate + self.euribor_spread
+                    
+                    # Per le rate successive, generiamo i tassi in modo stocastico
+                    if self.periods > 1:
+                        # Genera tassi solo per i periodi successivi al primo
+                        future_rates = self.generate_variable_rates_with_spread(
+                            current_euribor_rate, self.periods - 1, best_dist, best_params,
+                            historical_median, self.euribor_spread, seed=42)
+                        
+                        # Combina il primo tasso noto con i tassi generati per i periodi successivi
+                        variable_rates = [first_rate] + future_rates
+                    else:
+                        # Se c'è un solo periodo, usiamo solo il tasso corrente
+                        variable_rates = [first_rate]
+                    
+                    # Calcola il piano di ammortamento in base al tipo
+                    if self.amortization_type == "French":
+                        # Metodo Francese (a rata costante per ogni tasso)
+                        initial_balance = [self.loan_amount]
+                        final_balance = []
+                        interest = []
+                        principal = []
+                        payment = []
+                        
+                        for i in range(self.periods):
+                            period_rate = variable_rates[i]
+                            remaining_periods = self.periods - i
+                            
+                            # Ricalcolo della rata in base al tasso corrente e al capitale residuo
+                            period_payment = abs(npf.pmt(period_rate, remaining_periods, -initial_balance[i]))
+                            
+                            # Calcolo delle componenti della rata
+                            period_interest = period_rate * initial_balance[i]
+                            period_principal = period_payment - period_interest
+                            period_final_balance = initial_balance[i] - period_principal
+                            
+                            # Gestione dell'ultimo periodo per assicurare che il saldo finale sia esattamente zero
+                            if i == self.periods - 1:
+                                # Aggiustiamo la quota capitale per far chiudere il piano a zero
+                                period_principal = initial_balance[i]
+                                period_payment = period_interest + period_principal
+                                period_final_balance = 0
+                            
+                            # Accumulo dei valori
+                            payment.append(period_payment)
+                            interest.append(period_interest)
+                            principal.append(period_principal)
+                            final_balance.append(period_final_balance)
+                            
+                            # Prepara il saldo iniziale per il periodo successivo
+                            if i < self.periods - 1:
+                                initial_balance.append(period_final_balance)
+                        
+                    elif self.amortization_type == "Italian":
+                        # Metodo Italiano (quota capitale costante)
+                        # La quota capitale è costante per definizione
+                        principal_payment = self.loan_amount / self.periods
+                        initial_balance = [self.loan_amount]
+                        final_balance = []
+                        principal = []
+                        interest = []
+                        payment = []
+                        
+                        for i in range(self.periods):
+                            # Calcolo interessi per questo periodo
+                            period_interest = initial_balance[i] * variable_rates[i]
+                            
+                            # Gestione dell'ultimo periodo per assicurare che il saldo finale sia esattamente zero
+                            if i == self.periods - 1:
+                                period_principal = initial_balance[i]
+                            else:
+                                period_principal = principal_payment
+                            
+                            # Calcolo rata e saldo finale
+                            period_payment = period_interest + period_principal
+                            period_final_balance = initial_balance[i] - period_principal
+                            
+                            # Accumulo dei valori
+                            interest.append(period_interest)
+                            principal.append(period_principal)
+                            payment.append(period_payment)
+                            final_balance.append(period_final_balance)
+                            
+                            # Prepara il saldo iniziale per il periodo successivo
+                            if i < self.periods - 1:
+                                initial_balance.append(period_final_balance)
+                    else:
+                        raise ValueError("Unsupported amortization type")
+                    
+                    # Verifica che tutte le liste abbiano la stessa lunghezza
+                    list_lengths = {
+                        'initial_balance': len(initial_balance),
+                        'payment': len(payment),
+                        'interest': len(interest),
+                        'principal': len(principal),
+                        'final_balance': len(final_balance),
+                        'periods_dates': len(periods_dates)
+                    }
+                    
+                    if len(set(list_lengths.values())) != 1:
+                        raise ValueError(f"Inconsistent list lengths in loan table calculation: {list_lengths}")
+                    
+                    # Creazione della tabella di ammortamento
+                    table = pd.DataFrame({
+                        'Initial Debt': initial_balance,
+                        'Payment': payment,
+                        'Interest': interest,
+                        'Principal': principal,
+                        'Balance': final_balance
+                    }, index=pd.to_datetime(periods_dates))
+                    
+                    return table.round(2)
         else:
             raise ValueError("Unsupported rate type or Euribor configuration")
 
