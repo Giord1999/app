@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame)
+                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QCheckBox)
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont
@@ -77,7 +77,7 @@ class FluentStylesheet:
     def get_base_stylesheet():
         return """
             QWidget {
-                font-size: 12pt;
+                font-size: 11.5pt;
             }
             
             QMainWindow {
@@ -654,6 +654,35 @@ class LoanDialog(FluentDialog):
         form = QFormLayout()
         form.setSpacing(10)
         
+
+        # Rate type selection (fixed or variable)
+        self.rate_type_combobox = QComboBox()
+        self.rate_type_combobox.addItems(["fixed", "variable"])
+        self.rate_type_combobox.currentTextChanged.connect(self.on_rate_type_changed)
+        form.addRow("Rate Type:", self.rate_type_combobox)
+        
+        # Use Euribor checkbox (visible only for variable rate)
+        self.use_euribor_checkbox = QCheckBox("Use Euribor rates")
+        self.use_euribor_checkbox.setChecked(False)
+        self.use_euribor_checkbox.setVisible(False)
+        self.use_euribor_checkbox.stateChanged.connect(self.on_use_euribor_changed)
+        form.addRow("", self.use_euribor_checkbox)
+        
+        # Euribor spread input (visible only when using Euribor)
+        self.euribor_spread_entry = QDoubleSpinBox()
+        self.euribor_spread_entry.setRange(0, 10)
+        self.euribor_spread_entry.setDecimals(3)
+        self.euribor_spread_entry.setSingleStep(0.125)
+        self.euribor_spread_entry.setSuffix("%")
+        self.euribor_spread_entry.setVisible(False)
+        form.addRow("Euribor Spread (%):", self.euribor_spread_entry)
+        
+        # Euribor update frequency (visible only when using Euribor)
+        self.update_frequency_combobox = QComboBox()
+        self.update_frequency_combobox.addItems(["monthly", "quarterly", "semi-annual", "annual"])
+        self.update_frequency_combobox.setVisible(False)
+        form.addRow("Rate Update Frequency:", self.update_frequency_combobox)
+
         # Rate input
         self.rate_entry = QDoubleSpinBox()
         self.rate_entry.setRange(0, 100)
@@ -719,6 +748,35 @@ class LoanDialog(FluentDialog):
         self.additional_costs = {}
         self.periodic_expenses = {}
 
+    def on_rate_type_changed(self, text):
+        """Mostra/nasconde opzioni per tassi variabili"""
+        is_variable = (text == "variable")
+        self.use_euribor_checkbox.setVisible(is_variable)
+        
+        # Se si passa da variabile a fisso, nascondi gli altri controlli
+        if not is_variable:
+            self.euribor_spread_entry.setVisible(False)
+            self.update_frequency_combobox.setVisible(False)
+
+    def on_use_euribor_changed(self, state):
+        """Mostra/nasconde opzioni per tassi Euribor"""
+        use_euribor = (state == Qt.Checked)
+        self.euribor_spread_entry.setVisible(use_euribor)
+        self.update_frequency_combobox.setVisible(use_euribor)
+        
+        # Se si usa Euribor, modifica l'etichetta del campo tasso
+        if use_euribor:
+            # Il tasso ora rappresenta lo spread sopra l'Euribor
+            self.rate_entry.setPrefix("Euribor + ")
+            # Mostra un messaggio di informazione
+            QMessageBox.information(self, "Euribor Rate", 
+                                   "When using Euribor rates, the current Euribor rate will be automatically " +
+                                   "retrieved and added to the specified spread.")
+        else:
+            # Il tasso ora rappresenta il tasso fisso
+            self.rate_entry.setPrefix("")
+
+
     def open_additional_costs_dialog(self):
         dialog = AdditionalCostsDialog(self)
         if dialog.exec_() == QDialog.Accepted:
@@ -734,9 +792,13 @@ class LoanDialog(FluentDialog):
             "downpayment_percent": self.downpayment_entry.value(),
             "amortization_type": self.amortization_combobox.currentText(),
             "frequency": self.frequency_combobox.currentText(),
+            "rate_type": self.rate_type_combobox.currentText(),
+            "use_euribor": self.use_euribor_checkbox.isChecked(),
+            "euribor_spread": self.euribor_spread_entry.value(),
             "additional_costs": self.additional_costs or {},
             "periodic_expenses": self.periodic_expenses or {}
         }
+    
 
 class AdditionalCostsDialog(FluentDialog):
     def __init__(self, parent=None):
@@ -810,6 +872,9 @@ class AdditionalCostsDialog(FluentDialog):
             'additional_costs': one_time_costs,
             'periodic_expenses': periodic_costs
         }
+    
+
+
 class LoanPaymentAnalysisDialog(FluentDialog):
     """Finestra per l'analisi dei pagamenti"""
     def __init__(self, loan, parent=None):
@@ -1004,6 +1069,37 @@ class EditLoanDialog(FluentDialog):
         
         form = QFormLayout()
         form.setSpacing(10)
+
+        # Rate type selection
+        self.rate_type_combobox = QComboBox()
+        self.rate_type_combobox.addItems(["fixed", "variable"])
+        self.rate_type_combobox.setCurrentText(loan.rate_type)
+        self.rate_type_combobox.currentTextChanged.connect(self.on_rate_type_changed)
+        form.addRow("Rate Type:", self.rate_type_combobox)
+        
+        # Use Euribor checkbox
+        self.use_euribor_checkbox = QCheckBox("Use Euribor rates")
+        self.use_euribor_checkbox.setChecked(loan.use_euribor)
+        self.use_euribor_checkbox.setVisible(loan.rate_type == "variable")
+        self.use_euribor_checkbox.stateChanged.connect(self.on_use_euribor_changed)
+        form.addRow("", self.use_euribor_checkbox)
+        
+        # Euribor spread input
+        self.euribor_spread_entry = QDoubleSpinBox()
+        self.euribor_spread_entry.setRange(0, 10)
+        self.euribor_spread_entry.setDecimals(3)
+        self.euribor_spread_entry.setSingleStep(0.125)
+        self.euribor_spread_entry.setSuffix("%")
+        self.euribor_spread_entry.setValue(loan.euribor_spread * 100)  # Convert to percentage
+        self.euribor_spread_entry.setVisible(loan.rate_type == "variable" and loan.use_euribor)
+        form.addRow("Euribor Spread (%):", self.euribor_spread_entry)
+        
+        # Euribor update frequency
+        self.update_frequency_combobox = QComboBox()
+        self.update_frequency_combobox.addItems(["monthly", "quarterly", "semi-annual", "annual"])
+        self.update_frequency_combobox.setCurrentText(loan.update_frequency or "monthly")
+        self.update_frequency_combobox.setVisible(loan.rate_type == "variable" and loan.use_euribor)
+        form.addRow("Rate Update Frequency:", self.update_frequency_combobox)
         
         # Rate input
         self.rate_entry = QDoubleSpinBox()
@@ -1064,6 +1160,28 @@ class EditLoanDialog(FluentDialog):
         
         self.button_layout.addWidget(cancel_button)
         self.button_layout.addWidget(update_button)
+
+    def on_rate_type_changed(self, text):
+        """Mostra/nasconde opzioni per tassi variabili"""
+        is_variable = (text == "variable")
+        self.use_euribor_checkbox.setVisible(is_variable)
+        
+        # Se si passa da variabile a fisso, nascondi gli altri controlli
+        if not is_variable:
+            self.euribor_spread_entry.setVisible(False)
+            self.update_frequency_combobox.setVisible(False)
+            self.rate_entry.setPrefix("")
+
+    def on_use_euribor_changed(self, state):
+        """Mostra/nasconde opzioni per tassi Euribor"""
+        use_euribor = (state == Qt.Checked)
+        self.euribor_spread_entry.setVisible(use_euribor)
+        self.update_frequency_combobox.setVisible(use_euribor)
+        
+        # Se si usa Euribor, modifica l'etichetta del campo tasso
+        if use_euribor:
+            self.rate_entry.setPrefix("Euribor + ")
+
 
     def get_updated_loan_data(self):
         return {
