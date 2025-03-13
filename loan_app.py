@@ -7,8 +7,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QCheckBox)
 
 
-from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont
-from PyQt5.QtCore import Qt, QSize, QTimer
+from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen
+from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation
 
 
 # Set the backend for matplotlib
@@ -29,9 +29,8 @@ import pandas as pd
 import psycopg2
 from loan import Loan, DbManager
 from ai_chatbot_loan import Chatbot
+from loan_crm import LoanCRM
 
-
-#TODO: implementare i tassi variabili
 
 
 def resource_path(relative_path):
@@ -1360,6 +1359,814 @@ class PlotDialog(FluentDialog):
         self.figure.tight_layout()  # Adjust plot layout when dialog is resized
         self.canvas.draw_idle()     # Redraw canvas efficiently
 
+
+class SidebarWidget(QWidget):
+    """Widget per la sidebar ridimensionabile dell'applicazione."""
+    def __init__(self, parent=None, theme_manager=None):
+        super().__init__(parent)
+        self.theme_manager = theme_manager
+        self.collapsed = False
+        self.toggle_button = None
+        self.content_widget = None
+        self.animation = None
+        self.resize_handle = None
+        self.is_resizing = False
+        self.start_x = 0
+        self.start_width = 0
+        self.expanded_width = 250  # Larghezza quando espanso
+        self.init_ui()
+
+    def init_ui(self):
+        # Layout principale
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Contenitore per il contenuto della sidebar
+        self.content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(5, 10, 5, 10)
+        self.content_layout.setSpacing(10)
+        
+        # Bottone hamburger per collassare/espandere in stile Instagram
+        self.toggle_button = QPushButton()
+        self.toggle_button.setFixedSize(32, 32)
+        self.toggle_button.clicked.connect(self.toggle_sidebar)
+        self.toggle_button.setCursor(Qt.PointingHandCursor)  # Cambia il cursore per un feedback migliore
+        
+        # Stile per il menu hamburger
+        self.toggle_button.setStyleSheet("""
+            QPushButton {
+                border: none;
+                background-color: transparent;
+                padding: 0;
+            }
+            QPushButton::hover {
+                background-color: rgba(0, 0, 0, 0.05);
+                border-radius: 16px;
+            }
+        """)
+        
+        # Imposta l'icona hamburger
+        self.update_hamburger_icon()
+        
+        # Layout per il bottone (allineato in alto a destra)
+        toggle_layout = QHBoxLayout()
+        toggle_layout.setContentsMargins(0, 5, 5, 0)
+        toggle_layout.addStretch()
+        toggle_layout.addWidget(self.toggle_button)
+        
+        # Aggiungi i layout al layout principale
+        main_layout.addLayout(toggle_layout)
+        main_layout.addWidget(self.content_widget)
+        main_layout.addStretch()
+        
+        # Crea il resize handle (maniglia di ridimensionamento)
+        self.resize_handle = QFrame(self)
+        self.resize_handle.setFrameShape(QFrame.VLine)
+        self.resize_handle.setFrameShadow(QFrame.Sunken)
+        self.resize_handle.setCursor(Qt.SizeHorCursor)
+        self.resize_handle.setFixedWidth(4)
+        self.resize_handle.setStyleSheet("""
+            QFrame {
+                background-color: transparent;
+                border: none;
+            }
+            QFrame:hover {
+                background-color: rgba(0, 120, 212, 0.3);
+            }
+        """)
+        
+        # Posiziona il resize handle sul bordo destro
+        self.resize_handle.setGeometry(self.width() - 4, 0, 4, self.height())
+        
+        # Stile iniziale
+        self.setMinimumWidth(50)  # Larghezza minima quando collassato
+        self.setMaximumWidth(500)  # Imposta una larghezza massima ragionevole
+        self.setFixedWidth(self.expanded_width)  # Larghezza iniziale
+        self.update_style()
+    
+    def update_hamburger_icon(self):
+        """Aggiorna l'icona del menu hamburger basata sullo stato"""
+        # Crea un'icona "hamburger" usando il disegno manuale
+        icon_size = QSize(18, 18)
+        hamburger_icon = QPixmap(icon_size)
+        hamburger_icon.fill(Qt.transparent)
+        
+        painter = QPainter(hamburger_icon)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Usa un colore basato sul tema corrente
+        if self.theme_manager and self.theme_manager.get_current_theme() == "dark":
+            painter.setPen(QPen(Qt.white, 2))
+        else:
+            painter.setPen(QPen(Qt.black, 2))
+        
+        # Disegna tre linee orizzontali per creare il menu hamburger
+        if not self.collapsed:
+            # Tre linee parallele del menu hamburger
+            y_offset = 4
+            for i in range(3):
+                painter.drawLine(3, y_offset, 15, y_offset)
+                y_offset += 5
+        else:
+            # X per indicare chiusura quando è collassato
+            painter.drawLine(5, 5, 13, 13)
+            painter.drawLine(13, 5, 5, 13)
+        
+        painter.end()
+        
+        self.toggle_button.setIcon(QIcon(hamburger_icon))
+        self.toggle_button.setIconSize(icon_size)
+    
+    def add_widget(self, widget):
+        """Aggiungi un widget alla sidebar."""
+        self.content_layout.addWidget(widget)
+    
+    def toggle_sidebar(self):
+        """Espandi/collassa la sidebar."""
+        self.collapsed = not self.collapsed
+        target_width = 50 if self.collapsed else self.expanded_width
+        
+        # Aggiorna l'icona invece di cambiare il testo
+        self.update_hamburger_icon()
+        
+        # Animazione di transizione
+        self.animation = QPropertyAnimation(self, b"minimumWidth")
+        self.animation.setDuration(200)
+        self.animation.setStartValue(self.width())
+        self.animation.setEndValue(target_width)
+        self.animation.start()
+        
+        # Imposta anche la larghezza massima durante l'animazione
+        self.setFixedWidth(target_width)
+        
+        # Nascondi/mostra il contenuto durante l'animazione
+        self.content_widget.setVisible(not self.collapsed)
+    
+    def update_style(self):
+        """Aggiorna lo stile in base al tema corrente."""
+        if self.theme_manager:
+            theme = self.theme_manager.get_current_theme()
+            if theme == "light":
+                self.setStyleSheet("""
+                    QWidget {
+                        background-color: #f5f5f5;
+                        border-right: 1px solid #e0e0e0;
+                    }
+                    QPushButton {
+                        background-color: #ffffff;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #f0f0f0;
+                    }
+                """)
+            else:
+                self.setStyleSheet("""
+                    QWidget {
+                        background-color: #333333;
+                        border-right: 1px solid #444444;
+                    }
+                    QPushButton {
+                        background-color: #444444;
+                        border: 1px solid #555555;
+                        border-radius: 4px;
+                        color: #ffffff;
+                    }
+                    QPushButton:hover {
+                        background-color: #555555;
+                    }
+                """)
+            
+            # Aggiorna anche l'icona perché potrebbe essere cambiato il tema
+            self.update_hamburger_icon()
+    
+    def resizeEvent(self, event):
+        """Gestisce il ridimensionamento del widget."""
+        super().resizeEvent(event)
+        # Aggiorna la posizione del resize handle
+        if self.resize_handle:
+            self.resize_handle.setGeometry(self.width() - 4, 0, 4, self.height())
+    
+    def mousePressEvent(self, event):
+        """Gestisce l'evento di pressione del mouse."""
+        if self.resize_handle.geometry().contains(event.pos()):
+            self.is_resizing = True
+            self.start_x = event.globalX()
+            self.start_width = self.width()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        """Gestisce l'evento di movimento del mouse."""
+        if self.is_resizing:
+            # Calcola la nuova larghezza
+            delta = event.globalX() - self.start_x
+            new_width = max(self.minimumWidth(), min(self.start_width + delta, self.maximumWidth()))
+            
+            # Se non è collassato, aggiorna la larghezza quando espanso
+            if not self.collapsed and new_width > 50:
+                self.expanded_width = new_width
+            
+            # Imposta la nuova larghezza
+            self.setFixedWidth(new_width)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        """Gestisce l'evento di rilascio del mouse."""
+        if self.is_resizing:
+            self.is_resizing = False
+            
+            # Se la larghezza è molto piccola, considera collassato
+            if self.width() < 60:
+                self.collapsed = True
+                self.setFixedWidth(50)
+                self.content_widget.setVisible(False)
+                self.update_hamburger_icon()
+            # Se è stato espanso da collassato, aggiorna lo stato
+            elif self.collapsed and self.width() > 50:
+                self.collapsed = False
+                self.content_widget.setVisible(True)
+                self.update_hamburger_icon()
+            
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+class CRMWidget(QWidget):
+    """Widget principale per la gestione del CRM."""
+    def __init__(self, crm_manager, parent=None, theme_manager=None):
+        super().__init__(parent)
+        self.crm_manager = crm_manager
+        self.theme_manager = theme_manager
+        self.current_client = None
+        self.init_ui()
+        self.load_clients()
+    
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+        
+        # Titolo
+        title_label = QLabel("Client Manager")
+        font = QFont()
+        font.setPointSize(12)
+        font.setBold(True)
+        title_label.setFont(font)
+        title_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(title_label)
+        
+        # Barra azioni
+        action_layout = QHBoxLayout()
+        self.add_client_btn = QPushButton("Add Client")
+        self.add_client_btn.clicked.connect(self.add_client)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.load_clients)
+        action_layout.addWidget(self.add_client_btn)
+        action_layout.addWidget(self.refresh_btn)
+        main_layout.addLayout(action_layout)
+        
+        # Lista clients
+        self.clients_list = QListWidget()
+        self.clients_list.itemClicked.connect(self.on_client_selected)
+        main_layout.addWidget(self.clients_list)
+        
+        # Bottoni per le operazioni sul client selezionato
+        client_actions = QHBoxLayout()
+        self.view_details_btn = QPushButton("View Details")
+        self.view_details_btn.clicked.connect(self.view_client_details)
+        self.edit_client_btn = QPushButton("Edit Client")
+        self.edit_client_btn.clicked.connect(self.edit_client)
+        self.delete_client_btn = QPushButton("Delete Client")
+        self.delete_client_btn.clicked.connect(self.delete_client)
+        client_actions.addWidget(self.view_details_btn)
+        client_actions.addWidget(self.edit_client_btn)
+        client_actions.addWidget(self.delete_client_btn)
+        main_layout.addLayout(client_actions)
+        
+        # Bottoni per le interazioni
+        interaction_actions = QHBoxLayout()
+        self.add_interaction_btn = QPushButton("Add Interaction")
+        self.add_interaction_btn.clicked.connect(self.add_interaction)
+        self.view_interactions_btn = QPushButton("View Interactions")
+        self.view_interactions_btn.clicked.connect(self.view_interactions)
+        interaction_actions.addWidget(self.add_interaction_btn)
+        interaction_actions.addWidget(self.view_interactions_btn)
+        main_layout.addLayout(interaction_actions)
+        
+        # Bottone per associare prestito
+        self.assign_loan_btn = QPushButton("Assign Loan")
+        self.assign_loan_btn.clicked.connect(self.assign_loan)
+        main_layout.addWidget(self.assign_loan_btn)
+        
+        # Disabilita i pulsanti che richiedono un client selezionato
+        self.toggle_client_buttons(False)
+        
+        # Applica stile
+        self.update_style()
+    
+    def update_style(self):
+        """Aggiorna lo stile in base al tema corrente."""
+        if self.theme_manager:
+            # Lo stile sarà applicato automaticamente dall'app principale
+            pass
+    
+    def toggle_client_buttons(self, enabled):
+        """Attiva/disattiva i bottoni che richiedono un client selezionato."""
+        self.view_details_btn.setEnabled(enabled)
+        self.edit_client_btn.setEnabled(enabled)
+        self.delete_client_btn.setEnabled(enabled)
+        self.add_interaction_btn.setEnabled(enabled)
+        self.view_interactions_btn.setEnabled(enabled)
+        self.assign_loan_btn.setEnabled(enabled)
+    
+    def load_clients(self):
+        """Carica la lista dei clienti dal CRM."""
+        try:
+            clients = self.crm_manager.list_clients()
+            self.clients_list.clear()
+            
+            if not clients:
+                self.clients_list.addItem("No clients found")
+                return
+                
+            for client in clients:
+                item_text = f"{client['first_name']} {client['last_name']}"
+                item = QListWidgetItem(item_text)
+                item.setData(Qt.UserRole, client['client_id'])
+                self.clients_list.addItem(item)
+                
+            self.current_client = None
+            self.toggle_client_buttons(False)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load clients: {str(e)}")
+    
+    def on_client_selected(self, item):
+        """Gestisce la selezione di un client dalla lista."""
+        self.current_client = item.data(Qt.UserRole)
+        self.toggle_client_buttons(True)
+    
+    def add_client(self):
+        """Apre il dialogo per aggiungere un nuovo cliente."""
+        dialog = ClientDialog(self.crm_manager, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_clients()
+    
+    def edit_client(self):
+        """Apre il dialogo per modificare un cliente esistente."""
+        if not self.current_client:
+            return
+            
+        client_data = self.crm_manager.get_client(self.current_client)
+        if not client_data:
+            QMessageBox.warning(self, "Warning", "Client not found")
+            return
+            
+        dialog = ClientDialog(self.crm_manager, client_data, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_clients()
+    
+    def delete_client(self):
+        """Elimina il cliente selezionato."""
+        if not self.current_client:
+            return
+            
+        reply = QMessageBox.question(
+            self, "Confirm Delete", 
+            "Are you sure you want to delete this client?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                self.crm_manager.delete_client(self.current_client)
+                self.load_clients()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete client: {str(e)}")
+    
+    def view_client_details(self):
+        """Mostra i dettagli del cliente selezionato."""
+        if not self.current_client:
+            return
+            
+        client_data = self.crm_manager.get_client(self.current_client)
+        if not client_data:
+            QMessageBox.warning(self, "Warning", "Client not found")
+            return
+            
+        dialog = ClientDetailsDialog(client_data, self.crm_manager, parent=self)
+        dialog.exec_()
+    
+    def add_interaction(self):
+        """Aggiunge una nuova interazione col cliente."""
+        if not self.current_client:
+            return
+            
+        dialog = InteractionDialog(self.current_client, self.crm_manager, parent=self)
+        dialog.exec_()
+    
+    def view_interactions(self):
+        """Visualizza le interazioni del cliente selezionato."""
+        if not self.current_client:
+            return
+            
+        interactions = self.crm_manager.get_interactions(self.current_client)
+        dialog = InteractionsListDialog(interactions, parent=self)
+        dialog.exec_()
+    
+    def assign_loan(self):
+        """Assegna un prestito al cliente selezionato."""
+        if not self.current_client:
+            return
+            
+        # Ottieni la lista dei prestiti disponibili dall'app principale
+        parent_window = self.window()
+        if not hasattr(parent_window, 'loans') or not parent_window.loans:
+            QMessageBox.warning(self, "Warning", "No loans available")
+            return
+            
+        dialog = AssignLoanDialog(
+            self.current_client, 
+            parent_window.loans,
+            self.crm_manager,
+            parent=self
+        )
+        dialog.exec_()
+
+class ClientDialog(FluentDialog):
+    """Dialogo per la creazione/modifica di un cliente."""
+    def __init__(self, crm_manager, client_data=None, parent=None):
+        title = "Edit Client" if client_data else "Add New Client"
+        super().__init__(title, parent)
+        self.crm_manager = crm_manager
+        self.client_data = client_data or {}
+        self.client_id = client_data.get("client_id") if client_data else None
+        self.init_ui()
+        
+    def init_ui(self):
+        form_layout = QFormLayout()
+        
+        # First Name
+        self.first_name = QLineEdit()
+        self.first_name.setText(self.client_data.get("first_name", ""))
+        form_layout.addRow("First Name:", self.first_name)
+        
+        # Last Name
+        self.last_name = QLineEdit()
+        self.last_name.setText(self.client_data.get("last_name", ""))
+        form_layout.addRow("Last Name:", self.last_name)
+        
+        # Birth Date
+        self.birth_date = QLineEdit()
+        if "birth_date" in self.client_data and self.client_data["birth_date"]:
+            self.birth_date.setText(self.client_data["birth_date"].strftime("%Y-%m-%d"))
+        form_layout.addRow("Birth Date (YYYY-MM-DD):", self.birth_date)
+        
+        # Address
+        self.address = QLineEdit()
+        self.address.setText(self.client_data.get("address", ""))
+        form_layout.addRow("Address:", self.address)
+        
+        # City
+        self.city = QLineEdit()
+        self.city.setText(self.client_data.get("city", ""))
+        form_layout.addRow("City:", self.city)
+        
+        # State
+        self.state = QLineEdit()
+        self.state.setText(self.client_data.get("state", ""))
+        form_layout.addRow("State:", self.state)
+        
+        # ZIP Code
+        self.zip_code = QLineEdit()
+        self.zip_code.setText(self.client_data.get("zip_code", ""))
+        form_layout.addRow("ZIP Code:", self.zip_code)
+        
+        # Country
+        self.country = QLineEdit()
+        self.country.setText(self.client_data.get("country", ""))
+        form_layout.addRow("Country:", self.country)
+        
+        # Phone
+        self.phone = QLineEdit()
+        self.phone.setText(self.client_data.get("phone", ""))
+        form_layout.addRow("Phone:", self.phone)
+        
+        # Email
+        self.email = QLineEdit()
+        self.email.setText(self.client_data.get("email", ""))
+        form_layout.addRow("Email:", self.email)
+        
+        # Occupation
+        self.occupation = QLineEdit()
+        self.occupation.setText(self.client_data.get("occupation", ""))
+        form_layout.addRow("Occupation:", self.occupation)
+        
+        # Employer
+        self.employer = QLineEdit()
+        self.employer.setText(self.client_data.get("employer", ""))
+        form_layout.addRow("Employer:", self.employer)
+        
+        # Income
+        self.income = QDoubleSpinBox()
+        self.income.setRange(0, 10000000)
+        self.income.setPrefix("€ ")
+        if "income" in self.client_data:
+            self.income.setValue(float(self.client_data["income"]) if self.client_data["income"] else 0)
+        form_layout.addRow("Income:", self.income)
+        
+        # Credit Score
+        self.credit_score = QSpinBox()
+        self.credit_score.setRange(300, 850)
+        if "credit_score" in self.client_data:
+            self.credit_score.setValue(self.client_data["credit_score"] if self.client_data["credit_score"] else 300)
+        form_layout.addRow("Credit Score:", self.credit_score)
+        
+        self.main_layout.insertLayout(0, form_layout)
+        
+        # Save and Cancel buttons
+        self.save_button = QPushButton("Save Client")
+        self.save_button.clicked.connect(self.save_client)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        
+        self.button_layout.addWidget(self.cancel_button)
+        self.button_layout.addWidget(self.save_button)
+    
+    def save_client(self):
+        """Salva i dati del cliente."""
+        try:
+            # Validazione dei campi obbligatori
+            if not self.first_name.text().strip() or not self.last_name.text().strip():
+                QMessageBox.warning(self, "Validation Error", "First name and last name are required")
+                return
+            
+            # Prepara i dati del cliente
+            client_data = {
+                "first_name": self.first_name.text().strip(),
+                "last_name": self.last_name.text().strip(),
+                "address": self.address.text().strip(),
+                "city": self.city.text().strip(),
+                "state": self.state.text().strip(),
+                "zip_code": self.zip_code.text().strip(),
+                "country": self.country.text().strip(),
+                "phone": self.phone.text().strip(),
+                "email": self.email.text().strip(),
+                "occupation": self.occupation.text().strip(),
+                "employer": self.employer.text().strip(),
+                "income": self.income.value(),
+                "credit_score": self.credit_score.value()
+            }
+            
+            # Gestione della data di nascita
+            if self.birth_date.text().strip():
+                try:
+                    from datetime import datetime
+                    client_data["birth_date"] = datetime.strptime(
+                        self.birth_date.text().strip(), 
+                        "%Y-%m-%d"
+                    ).date()
+                except ValueError:
+                    QMessageBox.warning(
+                        self, 
+                        "Validation Error", 
+                        "Invalid birth date format. Please use YYYY-MM-DD"
+                    )
+                    return
+            
+            # Aggiorna o crea il cliente
+            if self.client_id:
+                self.crm_manager.update_client(self.client_id, client_data)
+            else:
+                self.crm_manager.add_client(client_data)
+                
+            self.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save client: {str(e)}")
+
+
+class ClientDetailsDialog(FluentDialog):
+    """Dialogo per la visualizzazione dei dettagli di un cliente."""
+    def __init__(self, client_data, crm_manager, parent=None):
+        super().__init__(f"Client Details: {client_data['first_name']} {client_data['last_name']}", parent)
+        self.client_data = client_data
+        self.crm_manager = crm_manager
+        self.init_ui()
+        
+    def init_ui(self):
+        # Crea un widget di testo per mostrare i dettagli
+        details_text = QTextEdit()
+        details_text.setReadOnly(True)
+        
+        # Formatta i dettagli del cliente
+        details = f"""<h2>{self.client_data['first_name']} {self.client_data['last_name']}</h2>
+        <p><b>Client ID:</b> {self.client_data['client_id']}</p>
+        <p><b>Birth Date:</b> {self.client_data.get('birth_date', 'Not provided')}</p>
+        <p><b>Contact:</b><br>
+        Phone: {self.client_data.get('phone', 'Not provided')}<br>
+        Email: {self.client_data.get('email', 'Not provided')}</p>
+        <p><b>Address:</b><br>
+        {self.client_data.get('address', '')}<br>
+        {self.client_data.get('city', '')}, {self.client_data.get('state', '')} {self.client_data.get('zip_code', '')}<br>
+        {self.client_data.get('country', '')}</p>
+        <p><b>Employment:</b><br>
+        Occupation: {self.client_data.get('occupation', 'Not provided')}<br>
+        Employer: {self.client_data.get('employer', 'Not provided')}</p>
+        <p><b>Financial Information:</b><br>
+        Income: €{float(self.client_data.get('income', 0)):,.2f}<br>
+        Credit Score: {self.client_data.get('credit_score', 'Not provided')}</p>
+        <p><b>Created:</b> {self.client_data.get('created_at', '')}<br>
+        <b>Last Updated:</b> {self.client_data.get('updated_at', '')}</p>
+        """
+        
+        details_text.setHtml(details)
+        self.main_layout.insertWidget(0, details_text)
+        
+        # Ottieni e mostra i prestiti associati
+        loans_label = QLabel("<b>Associated Loans:</b>")
+        loans_list = QListWidget()
+        
+        try:
+            client_loans = self.crm_manager.get_client_loans(self.client_data['client_id'])
+            if client_loans:
+                for loan_data in client_loans:
+                    item_text = f"Loan {loan_data['loan_id']} - €{float(loan_data['loan_amount']):,.2f}"
+                    loans_list.addItem(item_text)
+            else:
+                loans_list.addItem("No loans associated with this client")
+        except Exception as e:
+            loans_list.addItem(f"Error loading loans: {str(e)}")
+            
+        self.main_layout.insertWidget(1, loans_label)
+        self.main_layout.insertWidget(2, loans_list)
+        
+        # Pulsante per chiudere
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
+
+
+class InteractionDialog(FluentDialog):
+    """Dialogo per aggiungere un'interazione con un cliente."""
+    def __init__(self, client_id, crm_manager, parent=None):
+        super().__init__("Add Interaction", parent)
+        self.client_id = client_id
+        self.crm_manager = crm_manager
+        self.init_ui()
+        
+    def init_ui(self):
+        form_layout = QFormLayout()
+        
+        # Tipo di interazione
+        self.interaction_type = QComboBox()
+        self.interaction_type.addItems([
+            "phone", "email", "meeting", "visit", "social", "other"
+        ])
+        form_layout.addRow("Interaction Type:", self.interaction_type)
+        
+        # Note sull'interazione
+        self.notes = QTextEdit()
+        self.notes.setPlaceholderText("Enter interaction details here...")
+        form_layout.addRow("Notes:", self.notes)
+        
+        self.main_layout.insertLayout(0, form_layout)
+        
+        # Pulsanti
+        save_button = QPushButton("Save Interaction")
+        save_button.clicked.connect(self.save_interaction)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        self.button_layout.addWidget(cancel_button)
+        self.button_layout.addWidget(save_button)
+    
+    def save_interaction(self):
+        """Salva l'interazione con il cliente."""
+        try:
+            interaction_type = self.interaction_type.currentText()
+            notes = self.notes.toPlainText().strip()
+            
+            if not notes:
+                QMessageBox.warning(self, "Validation Error", "Notes cannot be empty")
+                return
+                
+            self.crm_manager.record_interaction(
+                self.client_id,
+                interaction_type,
+                notes
+            )
+            
+            self.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save interaction: {str(e)}")
+
+
+class InteractionsListDialog(FluentDialog):
+    """Dialogo per visualizzare la lista delle interazioni con un cliente."""
+    def __init__(self, interactions, parent=None):
+        super().__init__("Client Interactions", parent)
+        self.interactions = interactions
+        self.init_ui()
+        
+    def init_ui(self):
+        # Crea una tabella per le interazioni
+        table = QTableWidget()
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["Date", "Type", "Notes", "Interaction ID"])
+        
+        # Popola la tabella con le interazioni
+        table.setRowCount(len(self.interactions))
+        
+        for row, interaction in enumerate(self.interactions):
+            # Data
+            date_item = QTableWidgetItem(str(interaction.get('interaction_date', '')))
+            table.setItem(row, 0, date_item)
+            
+            # Tipo
+            type_item = QTableWidgetItem(str(interaction.get('interaction_type', '')))
+            table.setItem(row, 1, type_item)
+            
+            # Note
+            notes_item = QTableWidgetItem(str(interaction.get('notes', '')))
+            table.setItem(row, 2, notes_item)
+            
+            # ID interazione
+            id_item = QTableWidgetItem(str(interaction.get('interaction_id', '')))
+            table.setItem(row, 3, id_item)
+        
+        # Imposta le dimensioni delle colonne
+        table.setColumnWidth(0, 150)  # Data
+        table.setColumnWidth(1, 100)  # Tipo
+        table.setColumnWidth(2, 300)  # Note
+        table.resizeRowsToContents()
+        
+        self.main_layout.insertWidget(0, table)
+        
+        # Pulsante per chiudere
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
+
+
+class AssignLoanDialog(FluentDialog):
+    """Dialogo per assegnare un prestito a un cliente."""
+    def __init__(self, client_id, available_loans, crm_manager, parent=None):
+        super().__init__("Assign Loan to Client", parent)
+        self.client_id = client_id
+        self.available_loans = available_loans
+        self.crm_manager = crm_manager
+        self.init_ui()
+        
+    def init_ui(self):
+        form_layout = QFormLayout()
+        
+        # Crea una dropdown con i prestiti disponibili
+        self.loan_combo = QComboBox()
+        for i, loan in enumerate(self.available_loans):
+            loan_text = f"Loan {i+1} - {loan.loan_id} - €{loan.loan_amount:,.2f}"
+            self.loan_combo.addItem(loan_text, loan.loan_id)
+            
+        form_layout.addRow("Select Loan:", self.loan_combo)
+        self.main_layout.insertLayout(0, form_layout)
+        
+        # Pulsanti
+        assign_button = QPushButton("Assign Loan")
+        assign_button.clicked.connect(self.assign_loan)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        self.button_layout.addWidget(cancel_button)
+        self.button_layout.addWidget(assign_button)
+    
+    def assign_loan(self):
+        """Assegna il prestito selezionato al cliente."""
+        if self.loan_combo.currentIndex() < 0:
+            QMessageBox.warning(self, "Warning", "Please select a loan")
+            return
+            
+        try:
+            loan_id = self.loan_combo.currentData()
+            self.crm_manager.assign_loan_to_client(self.client_id, loan_id)
+            QMessageBox.information(
+                self, 
+                "Success", 
+                "Loan successfully assigned to client"
+            )
+            self.accept()
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                "Error", 
+                f"Failed to assign loan: {str(e)}"
+            )
+
 class LoanApp(QMainWindow):
     def __init__(self, db_manager):
         super().__init__()
@@ -1376,6 +2183,8 @@ class LoanApp(QMainWindow):
     
         # Initialize database schema
         self.db_manager.create_db()
+
+        self.crm_manager = LoanCRM(self.db_manager)
 
         if not self.db_manager.check_connection():
             QMessageBox.critical(self, "Database Error", "Impossibile connettersi al database.")
@@ -1394,6 +2203,22 @@ class LoanApp(QMainWindow):
         self.main_layout = QVBoxLayout(self.central_widget)
         self.main_layout.setSpacing(0)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
+
+    # Crea la sidebar
+        self.sidebar = SidebarWidget(parent=self, theme_manager=self.theme_manager)
+        
+        # Crea il widget CRM
+        self.crm_widget = CRMWidget(self.crm_manager, parent=self, theme_manager=self.theme_manager)
+        
+        # Aggiungi un bottone per aprire il CRM nella sidebar
+        crm_button = QPushButton("Customers")
+        crm_button.setIcon(QIcon(resource_path("crm.png")))
+        crm_button.clicked.connect(self.toggle_crm_widget)
+        self.sidebar.add_widget(crm_button)
+        
+        # Inizialmente nascondi il widget CRM
+        self.crm_widget.hide()
+        self.sidebar.add_widget(self.crm_widget)
     
         # Create UI components in the correct order
         self.create_menu_bar()
@@ -1506,6 +2331,13 @@ class LoanApp(QMainWindow):
         self.main_layout.addWidget(ribbon_widget)
 
     def create_main_area(self):
+
+        # Container per sidebar e area principale
+        content_container = QWidget()
+        content_layout = QHBoxLayout(content_container)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+          
         # Main container with stretch
         main_container = QWidget()
         main_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -1518,30 +2350,48 @@ class LoanApp(QMainWindow):
         self.loan_listbox.itemSelectionChanged.connect(self.select_loan)
         main_layout.addWidget(self.loan_listbox)
     
-        self.main_layout.addWidget(main_container)
+        content_layout.addWidget(self.sidebar)
+        content_layout.addWidget(main_container)
+        self.main_layout.addWidget(content_container)  # Questa è la riga corretta
 
+    def toggle_crm_widget(self):
+        """Toggle visibility of CRM widget"""
+        if self.crm_widget.isVisible():
+            self.crm_widget.hide()
+        else:
+            # Aggiorna la lista dei clienti prima di mostrare
+            self.crm_widget.load_clients()
+            self.crm_widget.show()
 
     def apply_initial_theme(self):
         """Applica gli stili del tema iniziale a tutti i componenti"""
         # Applica stili di base
         self.setStyleSheet(self.theme_manager.get_stylesheet())
-    
+
         # Applica stili specifici per il ribbon
         ribbon_widget = self.findChild(QWidget, "ribbon")
         if ribbon_widget:
             self.theme_manager.apply_theme_to_widget(ribbon_widget, "ribbon")
-    
+
         # Applica stili ai gruppi del ribbon
         for group in self.findChildren(CollapsibleRibbonGroup):
             self.theme_manager.apply_theme_to_widget(group, "ribbon")
-    
+
         # Applica stili ai bottoni del ribbon
         for button in self.findChildren(AdaptiveRibbonButton):
             self.theme_manager.apply_theme_to_widget(button, "ribbon")
-    
+
         # Applica stili alla main area
         if self.loan_listbox:
             self.theme_manager.apply_theme_to_widget(self.loan_listbox, "main_area")
+            
+        # Applica stili alla sidebar
+        if hasattr(self, 'sidebar'):
+            self.sidebar.update_style()
+            
+        # Applica stili al widget CRM
+        if hasattr(self, 'crm_widget'):
+            self.crm_widget.update_style()
 
 
     def load_existing_loans(self):
@@ -1643,31 +2493,38 @@ class LoanApp(QMainWindow):
     def toggle_theme(self):
         # Aggiorna il tema nel theme manager
         new_stylesheet = self.theme_manager.toggle_theme()
-    
+
         # Applica gli stili di base
         self.setStyleSheet(new_stylesheet)
-    
+
         # Applica stili specifici per il ribbon
         ribbon_widget = self.findChild(QWidget, "ribbon")
         if ribbon_widget:
             self.theme_manager.apply_theme_to_widget(ribbon_widget, "ribbon")
-    
+
         # Applica stili ai gruppi del ribbon
         for group in self.findChildren(CollapsibleRibbonGroup):
             self.theme_manager.apply_theme_to_widget(group, "ribbon")
-    
+
         # Applica stili ai bottoni del ribbon
         for button in self.findChildren(AdaptiveRibbonButton):
             self.theme_manager.apply_theme_to_widget(button, "ribbon")
-    
+
         # Applica stili alla main area
         if self.loan_listbox:
             self.theme_manager.apply_theme_to_widget(self.loan_listbox, "main_area")
-    
+            
+        # Aggiorna gli stili della sidebar e CRM
+        if hasattr(self, 'sidebar'):
+            self.sidebar.update_style()
+            
+        if hasattr(self, 'crm_widget'):
+            self.crm_widget.update_style()
+
         # Mostra feedback all'utente
         theme_name = self.theme_manager.get_current_theme().capitalize()
         QMessageBox.information(self, "Theme Changed", f"Switched to {theme_name} theme")
-
+        
     def new_loan(self):
         """Create a new loan and save it to database"""
         dialog = LoanDialog(self)
