@@ -13,7 +13,7 @@ import random
 from ecbdata import ecbdata
 from datetime import datetime 
 
-#TODO: sistemare la logica di matematica finanziaria per i calcoli relativi ai tassi variabili
+
 
 class DbManager:
     def __init__(self, dbname, user, password, host='localhost', port='5432'):
@@ -181,11 +181,19 @@ class DbManager:
 
     def delete_loan(self, loan_id):
         try:
-            # Prima elimina i record correlati in additional_costs
-            delete_costs_query = "DELETE FROM additional_costs WHERE loan_id = %s"
-            self.execute_db_query(delete_costs_query, (loan_id,))
+            # Elimina prima tutti i record correlati dalle tabelle dipendenti
+            tables = [
+                "amortization_schedule",  # Aggiunti questi due
+                "periodic_expenses",      # che mancavano
+                "additional_costs",
+                "client_loans"            # Anche questa per sicurezza
+            ]
             
-            # Poi elimina il prestito
+            for table in tables:
+                delete_related_query = f"DELETE FROM {table} WHERE loan_id = %s"
+                self.execute_db_query(delete_related_query, (loan_id,))
+            
+            # Poi elimina il prestito dalla tabella principale
             delete_loan_query = "DELETE FROM loans WHERE loan_id = %s"
             self.execute_db_query(delete_loan_query, (loan_id,))
             
@@ -713,7 +721,6 @@ class Loan:
             raise ValueError("Unsupported rate type or Euribor configuration")
 
 
-
     def plot_balances(self):
         amort = self.loan_table()
         if self.amortization_type == "French":
@@ -959,21 +966,20 @@ class Loan:
             if loan_to_delete is None:
                 print(f"Loan with ID {loan_id} not found in memory")
                 return False
+                    
+            # Use the instance method delete_from_db instead of calling db_manager.delete_loan directly
+            if loan_to_delete.delete_from_db():
+                # Il metodo delete_from_db già rimuove il prestito dalla lista loans
+                # e gestisce tutte le tabelle correlate necessarie
+                print(f"Successfully deleted loan {loan_id}")
+                return True
+            else:
+                print(f"Failed to delete loan {loan_id}")
+                return False
                 
-            # Delete from database using the loan's db_manager
-            if loan_to_delete.db_manager:
-                loan_to_delete.db_manager.delete_loan(loan_id)
-                
-            # Remove from memory list
-            cls.loans.remove(loan_to_delete)
-            
-            print(f"Successfully deleted loan {loan_id}")
-            return True
-            
         except Exception as e:
             print(f"Error deleting loan: {str(e)}")
             return False
-
 
     @classmethod
     def delete_loan_with_confirmation(cls):
