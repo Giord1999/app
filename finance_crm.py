@@ -39,7 +39,13 @@ class LoanCRM:
             documents JSONB,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        )
+        );
+        CREATE INDEX IF NOT EXISTS idx_clients_name ON clients (first_name, last_name);
+        CREATE INDEX IF NOT EXISTS idx_clients_email ON clients (email);
+        CREATE INDEX IF NOT EXISTS idx_clients_occupation ON clients (occupation);
+        CREATE INDEX IF NOT EXISTS idx_clients_employer ON clients (employer);
+        CREATE INDEX IF NOT EXISTS idx_clients_income ON clients (income);
+        CREATE INDEX IF NOT EXISTS idx_clients_credit_score ON clients (credit_score);
         """
         self.db_manager.execute_db_query(query)
 
@@ -68,7 +74,11 @@ class LoanCRM:
             interaction_type VARCHAR(50),
             notes TEXT,
             interaction_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        )
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_client_interactions_client_id ON client_interactions (client_id);
+        CREATE INDEX IF NOT EXISTS idx_client_interactions_interaction_type ON client_interactions (interaction_type);
+        CREATE INDEX IF NOT EXISTS idx_client_interactions_interaction_date ON client_interactions (interaction_date);
         """
         self.db_manager.execute_db_query(query)
 
@@ -267,3 +277,45 @@ class LoanCRM:
         columns = [desc[0] for desc in cursor.description]
         loans = [dict(zip(columns, row)) for row in rows]
         return loans
+
+    def get_client_details(self, client_id: str) -> dict:
+        """
+        Recupera i dati dettagliati di un cliente, includendo prestiti e interazioni.
+        
+        Args:
+            client_id (str): L'ID del cliente.
+        
+        Returns:
+            dict: Un dizionario con i dati dettagliati del cliente.
+        """
+        # Get basic client data
+        client_data = self.get_client(client_id)
+        if not client_data:
+            return {}
+        
+        # Get client's loans
+        client_data['loans'] = self.get_client_loans(client_id)
+        
+        # Get client's interactions
+        client_data['interactions'] = self.get_interactions(client_id)
+        
+        # Calculate additional metrics
+        client_data['loan_count'] = len(client_data['loans'])
+        client_data['total_debt'] = sum(loan.get('loan_amount', 0) for loan in client_data['loans'])
+        client_data['interaction_count'] = len(client_data['interactions'])
+        
+        # Calculate age if birth_date is available
+        if 'birth_date' in client_data and client_data['birth_date']:
+            try:
+                birth_date = datetime.strptime(str(client_data['birth_date']), '%Y-%m-%d')
+                today = datetime.now()
+                client_data['age'] = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+            except:
+                client_data['age'] = None
+        else:
+            client_data['age'] = None
+        
+        # Add region from city/state for geographical segmentation
+        client_data['region'] = client_data.get('state') or client_data.get('city') or 'Unknown'
+        
+        return client_data
