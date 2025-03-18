@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QCheckBox)
+                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QCheckBox, QFileDialog, QGroupBox)
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen
@@ -30,7 +30,7 @@ import psycopg2
 from loan import Loan, DbManager
 from ai_chatbot_loan import Chatbot
 from loan_crm import LoanCRM
-
+from loan_report import LoanReport
 
 
 def resource_path(relative_path):
@@ -91,23 +91,18 @@ class FluentStylesheet:
                 padding: 10px 20px;
                 font-size: 11pt;
                 min-width: 60px;
-                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-                transition: background-color 0.2s, box-shadow 0.2s;
             }
             
             QPushButton:hover {
                 background-color: #106ebe;
-                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
             }
             
             QPushButton:pressed {
                 background-color: #005a9e;
-                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
             }
             
             QPushButton:disabled {
                 background-color: #cccccc;
-                box-shadow: none;
             }
              
             QPushButton {
@@ -118,23 +113,19 @@ class FluentStylesheet:
                 padding: 10px 20px;
                 font-size: 11pt;
                 min-width: 60px;
-                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-                transition: background-color 0.2s, box-shadow 0.2s;
             }
             
             QPushButton:hover {
                 background-color: #106ebe;
-                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
             }
             
             QPushButton:pressed {
                 background-color: #005a9e;
-                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
             }
             
             QPushButton:disabled {
                 background-color: #cccccc;
-                box-shadow: none;
+                
             }
         """
 
@@ -641,7 +632,6 @@ class LoginDialog(QDialog):
  
     def get_db_params(self):
         return self.db_params
-
 
 
 class LoanDialog(FluentDialog):
@@ -2167,6 +2157,8 @@ class AssignLoanDialog(FluentDialog):
                 f"Failed to assign loan: {str(e)}"
             )
 
+
+
 class LoanApp(QMainWindow):
     def __init__(self, db_manager):
         super().__init__()
@@ -2215,6 +2207,11 @@ class LoanApp(QMainWindow):
         crm_button.setIcon(QIcon(resource_path("crm.png")))
         crm_button.clicked.connect(self.toggle_crm_widget)
         self.sidebar.add_widget(crm_button)
+        
+        reports_button = QPushButton("Reports")
+        reports_button.setIcon(QIcon(resource_path("report.png")))
+        reports_button.clicked.connect(self.open_reports)
+        self.sidebar.add_widget(reports_button)
         
         # Inizialmente nascondi il widget CRM
         self.crm_widget.hide()
@@ -2710,6 +2707,10 @@ class LoanApp(QMainWindow):
         dialog = ChatAssistantDialog(self)
         dialog.exec_()
 
+    def open_reports(self):
+        """Opens the reports dialog"""
+        dialog = ReportsDialog(self.db_manager, self.crm_manager, self.loans, self)
+        dialog.exec_()
 
     def setup_shortcuts(self):
         """Configura le scorciatoie da tastiera per do/undo"""
@@ -3270,7 +3271,7 @@ class LoanSelectionDialog(FluentDialog):
         selected_items = self.loans_list.selectedItems()
         return [item.data(Qt.UserRole) for item in selected_items]
 
-class ChatAssistantDialog(QDialog):
+class  ChatAssistantDialog(QDialog):
 
     def __init__(self, loan_app, parent=None):
         super().__init__(parent)
@@ -4348,6 +4349,604 @@ class ChatAssistantDialog(QDialog):
             self.chat_history.verticalScrollBar().maximum()
         )
 
+class ReportsDialog(FluentDialog):
+    """Dialog for accessing various loan reporting features."""
+    def __init__(self, db_manager, loan_crm, loans, parent=None):
+        super().__init__("Loan Reports", parent)
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+        
+        self.db_manager = db_manager
+        self.loan_crm = loan_crm
+        self.loans = loans
+        self.report_generator = LoanReport(db_manager, loan_crm)
+        
+        # Create tab widget for different report categories
+        self.tab_widget = QTabWidget()
+        
+        # Create tabs for different report categories
+        self.create_portfolio_tab()
+        self.create_client_tab()
+        self.create_forecast_tab()
+        self.create_export_tab()
+        
+        # Add tab widget to main layout
+        self.main_layout.insertWidget(0, self.tab_widget)
+        
+        # Add close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
+        
+    def create_portfolio_tab(self):
+        """Create the portfolio reports tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Portfolio summary section
+        group_summary = QGroupBox("Portfolio Summary")
+        summary_layout = QVBoxLayout(group_summary)
+        
+        summary_btn = QPushButton("Generate Portfolio Summary")
+        summary_btn.clicked.connect(self.generate_portfolio_summary)
+        summary_layout.addWidget(summary_btn)
+        
+        # Comparative analysis section
+        group_comparative = QGroupBox("Comparative Analysis")
+        comp_layout = QVBoxLayout(group_comparative)
+        
+        comp_btn = QPushButton("Generate Comparative Report")
+        comp_btn.clicked.connect(self.generate_comparative_report)
+        comp_layout.addWidget(comp_btn)
+        
+        # Amortization report section
+        group_amort = QGroupBox("Amortization Report")
+        amort_layout = QVBoxLayout(group_amort)
+        
+        amort_form = QFormLayout()
+        self.loan_combo = QComboBox()
+        self.update_loan_combo()
+        amort_form.addRow("Select Loan:", self.loan_combo)
+        
+        amort_btn = QPushButton("Generate Amortization Report")
+        amort_btn.clicked.connect(self.generate_amortization_report)
+        
+        amort_layout.addLayout(amort_form)
+        amort_layout.addWidget(amort_btn)
+        
+        # Probabilistic pricing section
+        group_pricing = QGroupBox("Probabilistic Pricing")
+        pricing_layout = QVBoxLayout(group_pricing)
+        
+        pricing_form = QFormLayout()
+        self.pricing_loan_combo = QComboBox()
+        self.update_loan_combo(self.pricing_loan_combo)
+        pricing_form.addRow("Select Loan:", self.pricing_loan_combo)
+        
+        self.sim_count_spin = QSpinBox()
+        self.sim_count_spin.setRange(100, 10000)
+        self.sim_count_spin.setValue(1000)
+        self.sim_count_spin.setSingleStep(100)
+        pricing_form.addRow("Simulation Count:", self.sim_count_spin)
+        
+        pricing_btn = QPushButton("Generate Pricing Report")
+        pricing_btn.clicked.connect(self.generate_pricing_report)
+        
+        pricing_layout.addLayout(pricing_form)
+        pricing_layout.addWidget(pricing_btn)
+        
+        # Add all groups to the tab layout
+        layout.addWidget(group_summary)
+        layout.addWidget(group_comparative)
+        layout.addWidget(group_amort)
+        layout.addWidget(group_pricing)
+        layout.addStretch()
+        
+        self.tab_widget.addTab(tab, "Portfolio Reports")
+        
+    def create_client_tab(self):
+        """Create the client reports tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Client segmentation section
+        group_segmentation = QGroupBox("Client Segmentation")
+        segmentation_layout = QVBoxLayout(group_segmentation)
+        
+        segmentation_btn = QPushButton("Generate Client Segmentation Report")
+        segmentation_btn.clicked.connect(self.generate_segmentation_report)
+        segmentation_layout.addWidget(segmentation_btn)
+        
+        # CRM Performance section
+        group_crm = QGroupBox("CRM Performance")
+        crm_layout = QVBoxLayout(group_crm)
+        
+        crm_btn = QPushButton("Generate CRM Performance Report")
+        crm_btn.clicked.connect(self.generate_crm_report)
+        crm_layout.addWidget(crm_btn)
+        
+        enhanced_crm_btn = QPushButton("Generate Enhanced CRM Report")
+        enhanced_crm_btn.clicked.connect(self.generate_enhanced_crm_report)
+        crm_layout.addWidget(enhanced_crm_btn)
+        
+        # Add all groups to the tab layout
+        layout.addWidget(group_segmentation)
+        layout.addWidget(group_crm)
+        layout.addStretch()
+        
+        self.tab_widget.addTab(tab, "Client Reports")
+        
+    def create_forecast_tab(self):
+        """Create the forecasting tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Euribor forecast section
+        group_forecast = QGroupBox("Euribor Rate Forecast")
+        forecast_layout = QVBoxLayout(group_forecast)
+        
+        forecast_form = QFormLayout()
+        
+        self.frequency_combo = QComboBox()
+        self.frequency_combo.addItems(["monthly", "quarterly", "semi-annual", "annual"])
+        forecast_form.addRow("Frequency:", self.frequency_combo)
+        
+        self.start_date_edit = QLineEdit()
+        self.start_date_edit.setText("2020-01-01")  # Default to last few years
+        forecast_form.addRow("Start Date (YYYY-MM-DD):", self.start_date_edit)
+        
+        forecast_btn = QPushButton("Generate Forecast Report")
+        forecast_btn.clicked.connect(self.generate_forecast_report)
+        
+        forecast_layout.addLayout(forecast_form)
+        forecast_layout.addWidget(forecast_btn)
+        
+        # Add all groups to the tab layout
+        layout.addWidget(group_forecast)
+        layout.addStretch()
+        
+        self.tab_widget.addTab(tab, "Forecasting")
+        
+    def create_export_tab(self):
+        """Create the export options tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Export section
+        group_export = QGroupBox("Export Options")
+        export_layout = QVBoxLayout(group_export)
+        
+        export_form = QFormLayout()
+        
+        self.export_format_combo = QComboBox()
+        self.export_format_combo.addItems(["PDF", "CSV"])
+        export_form.addRow("Export Format:", self.export_format_combo)
+        
+        self.report_type_combo = QComboBox()
+        self.report_type_combo.addItems([
+            "portfolio", "comparative", "amortization", "probabilistic", 
+            "client_segmentation", "crm_performance", "euribor_forecast"
+        ])
+        export_form.addRow("Report Type:", self.report_type_combo)
+        
+        export_btn = QPushButton("Export Last Generated Report")
+        export_btn.clicked.connect(self.export_report)
+        
+        export_layout.addLayout(export_form)
+        export_layout.addWidget(export_btn)
+        
+        # Add all groups to the tab layout
+        layout.addWidget(group_export)
+        layout.addStretch()
+        
+        self.tab_widget.addTab(tab, "Export Options")
+        
+    def update_loan_combo(self, combo_box=None):
+        """Update the loan combo box with available loans."""
+        if combo_box is None:
+            combo_box = self.loan_combo
+            
+        combo_box.clear()
+        for loan in self.loans:
+            combo_box.addItem(f"Loan {loan.loan_id} - €{loan.loan_amount:,.2f}", loan.loan_id)
+            
+    def generate_portfolio_summary(self):
+        """Generate and display portfolio summary report."""
+        try:
+            summary = self.report_generator.generate_portfolio_summary()
+            
+            # Create a formatted display of the summary
+            text = "Portfolio Summary Report\n"
+            text += "=" * 50 + "\n\n"
+            
+            for key, value in summary.items():
+                if isinstance(value, float):
+                    if "Rate" in key or "TAEG" in key:
+                        formatted_value = f"{value * 100:.2f}%" if key != "Average Initial Rate" else f"{value:.2f}%"
+                    else:
+                        formatted_value = f"€{value:,.2f}"
+                else:
+                    formatted_value = str(value)
+                text += f"{key}: {formatted_value}\n"
+                
+            self.show_report_result(text, "Portfolio Summary")
+            self.last_report_data = summary
+            self.last_report_type = "portfolio"
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate portfolio summary: {str(e)}")
+            
+    def generate_comparative_report(self):
+        """Generate and display comparative report."""
+        if len(self.loans) < 2:
+            QMessageBox.warning(self, "Warning", "You need at least two loans to generate a comparative report.")
+            return
+            
+        try:
+            report = self.report_generator.generate_comparative_report(self.loans)
+            
+            self.show_report_result(report, "Comparative Analysis")
+            self.last_report_data = report
+            self.last_report_type = "comparative"
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate comparative report: {str(e)}")
+            
+    def generate_amortization_report(self):
+        """Generate and display amortization report."""
+        if self.loan_combo.currentIndex() < 0:
+            QMessageBox.warning(self, "Warning", "Please select a loan.")
+            return
+            
+        loan_id = self.loan_combo.currentData()
+        
+        try:
+            amort_table = self.report_generator.generate_amortization_report(loan_id)
+            
+            # Create a dialog to display the amortization table
+            dialog = AmortizationDialog(amort_table, self)
+            dialog.exec_()
+            
+            self.last_report_data = amort_table
+            self.last_report_type = "amortization"
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate amortization report: {str(e)}")
+            
+    def generate_pricing_report(self):
+        """Generate and display probabilistic pricing report."""
+        if self.pricing_loan_combo.currentIndex() < 0:
+            QMessageBox.warning(self, "Warning", "Please select a loan.")
+            return
+            
+        loan_id = self.pricing_loan_combo.currentData()
+        simulations = self.sim_count_spin.value()
+        
+        try:
+            report = self.report_generator.generate_probabilistic_pricing_report(
+                loan_id, 
+                simulations=simulations
+            )
+            
+            # Create a formatted display of the results
+            text = "Probabilistic Pricing Analysis\n"
+            text += "=" * 50 + "\n\n"
+            text += f"Based on {simulations} simulations\n\n"
+            
+            if isinstance(report, pd.DataFrame):
+                stats = {
+                    "Mean": report.mean().mean(),
+                    "Median": report.median().mean(),
+                    "Min": report.min().min(),
+                    "Max": report.max().max(),
+                    "Std Dev": report.std().mean()
+                }
+                
+                for key, value in stats.items():
+                    text += f"{key}: {value:.2f}\n"
+                
+                text += "\nNote: Full results available in exported PDF report"
+            else:
+                text += str(report)
+                
+            self.show_report_result(text, "Probabilistic Pricing")
+            self.last_report_data = report
+            self.last_report_type = "probabilistic"
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate pricing report: {str(e)}")
+            
+    def generate_segmentation_report(self):
+        """Generate and display client segmentation report."""
+        if not self.loan_crm:
+            QMessageBox.warning(self, "Warning", "CRM module not available.")
+            return
+            
+        try:
+            report = self.report_generator.generate_client_segmentation_report()
+            
+            if "error" in report:
+                QMessageBox.warning(self, "Warning", f"Segmentation report issue: {report['error']}")
+                return
+                
+            # Create a formatted display of the results
+            text = "Client Segmentation Report\n"
+            text += "=" * 50 + "\n\n"
+            
+            # Income segments
+            if "income_segments" in report:
+                text += "Income Segments:\n"
+                for segment, count in report["income_segments"].items():
+                    text += f"  {segment}: {count} clients\n"
+                text += "\n"
+                
+            # Credit score segments
+            if "credit_score_segments" in report:
+                text += "Credit Score Segments:\n"
+                for segment, count in report["credit_score_segments"].items():
+                    text += f"  {segment}: {count} clients\n"
+                text += "\n"
+                
+            # Cluster profiles
+            if "cluster_profiles" in report and "error" not in report["cluster_profiles"]:
+                text += "Cluster Profiles:\n"
+                for cluster, profile in report["cluster_profiles"].items():
+                    text += f"  {cluster}: {profile['count']} clients\n"
+                    
+                    if "avg_income" in profile and profile["avg_income"] != "N/A":
+                        text += f"    Avg Income: €{profile['avg_income']:,.2f}\n"
+                        
+                    if "avg_credit_score" in profile and profile["avg_credit_score"] != "N/A":
+                        text += f"    Avg Credit Score: {profile['avg_credit_score']:.1f}\n"
+                text += "\n"
+                
+            self.show_report_result(text, "Client Segmentation")
+            self.last_report_data = report
+            self.last_report_type = "client_segmentation"
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate segmentation report: {str(e)}")
+            
+    def generate_crm_report(self):
+        """Generate and display CRM performance report."""
+        if not self.loan_crm:
+            QMessageBox.warning(self, "Warning", "CRM module not available.")
+            return
+            
+        try:
+            report = self.report_generator.generate_crm_performance_report()
+            
+            # Create a formatted display of the results
+            text = "CRM Performance Report\n"
+            text += "=" * 50 + "\n\n"
+            
+            for key, value in report.items():
+                formatted_value = f"{value:.2f}" if isinstance(value, float) else str(value)
+                text += f"{key}: {formatted_value}\n"
+                
+            self.show_report_result(text, "CRM Performance")
+            self.last_report_data = report
+            self.last_report_type = "crm_performance"
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate CRM report: {str(e)}")
+            
+    def generate_enhanced_crm_report(self):
+        """Generate and display enhanced CRM report."""
+        if not self.loan_crm:
+            QMessageBox.warning(self, "Warning", "CRM module not available.")
+            return
+            
+        try:
+            report = self.report_generator.generate_enhanced_crm_report()
+            
+            if "error" in report:
+                QMessageBox.warning(self, "Warning", f"Enhanced CRM report issue: {report['error']}")
+                return
+                
+            # Create a formatted display of the results
+            text = "Enhanced CRM Report\n"
+            text += "=" * 50 + "\n\n"
+            
+            # Performance metrics
+            if "performance_metrics" in report:
+                text += "Performance Metrics:\n"
+                for key, value in report["performance_metrics"].items():
+                    formatted_value = f"{value:.2f}" if isinstance(value, float) else str(value)
+                    text += f"  {key}: {formatted_value}\n"
+                text += "\n"
+                
+            # Client segmentation summary
+            if "client_segmentation" in report:
+                segmentation = report["client_segmentation"]
+                
+                if "income_segments" in segmentation:
+                    total = sum(segmentation["income_segments"].values())
+                    text += "Income Distribution:\n"
+                    for segment, count in segmentation["income_segments"].items():
+                        percentage = (count / total * 100) if total > 0 else 0
+                        text += f"  {segment}: {count} clients ({percentage:.1f}%)\n"
+                    text += "\n"
+                
+                if "credit_score_segments" in segmentation:
+                    total = sum(segmentation["credit_score_segments"].values())
+                    text += "Credit Score Distribution:\n"
+                    for segment, count in segmentation["credit_score_segments"].items():
+                        percentage = (count / total * 100) if total > 0 else 0
+                        text += f"  {segment}: {count} clients ({percentage:.1f}%)\n"
+                    text += "\n"
+                    
+            self.show_report_result(text, "Enhanced CRM Report")
+            self.last_report_data = report
+            self.last_report_type = "enhanced_crm"
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate enhanced CRM report: {str(e)}")
+            
+    def generate_forecast_report(self):
+        """Generate and display Euribor forecast report."""
+        frequency = self.frequency_combo.currentText()
+        start_date = self.start_date_edit.text().strip()
+        
+        if not start_date or not self.is_valid_date(start_date):
+            QMessageBox.warning(self, "Warning", "Please enter a valid start date in YYYY-MM-DD format.")
+            return
+            
+        try:
+            report = self.report_generator.generate_forecasting_report(
+                frequency=frequency,
+                start=start_date
+            )
+            
+            if report.empty:
+                QMessageBox.warning(self, "Warning", "No data available for the selected period.")
+                return
+                
+            # Create a formatted display of the results
+            text = "Euribor Forecast Report\n"
+            text += "=" * 50 + "\n\n"
+            text += f"Frequency: {frequency}\n"
+            text += f"Period: {report['TIME_PERIOD'].min()} to {report['TIME_PERIOD'].max()}\n\n"
+            
+            # Recent values
+            text += "Recent Values:\n"
+            recent = report.sort_values("TIME_PERIOD").tail(5)
+            for _, row in recent.iterrows():
+                period = row["TIME_PERIOD"]
+                value = row["OBS_VALUE"]
+                trend = "↑" if value > recent["OBS_VALUE"].iloc[0] else "↓" if value < recent["OBS_VALUE"].iloc[0] else "→"
+                text += f"  {period}: {value:.3f}% {trend}\n"
+            text += "\n"
+            
+            # Statistics
+            text += "Statistics:\n"
+            text += f"  Latest: {report['OBS_VALUE'].iloc[-1]:.3f}%\n"
+            text += f"  Average: {report['OBS_VALUE'].mean():.3f}%\n"
+            text += f"  Min: {report['OBS_VALUE'].min():.3f}%\n"
+            text += f"  Max: {report['OBS_VALUE'].max():.3f}%\n"
+            
+            self.show_report_result(text, "Euribor Forecast")
+            self.last_report_data = report
+            self.last_report_type = "euribor_forecast"
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate forecast report: {str(e)}")
+            
+    def export_report(self):
+        """Export the last generated report."""
+        if not hasattr(self, "last_report_data") or not hasattr(self, "last_report_type"):
+            QMessageBox.warning(self, "Warning", "No report has been generated yet.")
+            return
+            
+        export_format = self.export_format_combo.currentText()
+        report_type = self.report_type_combo.currentText()
+        
+        file_filter = "PDF Files (*.pdf)" if export_format == "PDF" else "CSV Files (*.csv)"
+        default_ext = ".pdf" if export_format == "PDF" else ".csv"
+        
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Save Report", 
+            f"{report_type}_report{default_ext}",
+            file_filter
+        )
+        
+        if not filepath:
+            return  # User cancelled
+            
+        try:
+            if export_format == "PDF":
+                filepath = self.report_generator.export_to_pdf(
+                    self.last_report_data,
+                    report_type,
+                    filepath
+                )
+                QMessageBox.information(self, "Success", f"Report exported to PDF at: {filepath}")
+                
+            else:  # CSV
+                # For DataFrame-based reports
+                if isinstance(self.last_report_data, pd.DataFrame):
+                    filepath = self.report_generator.export_report_to_csv(
+                        self.last_report_data,
+                        filepath
+                    )
+                    QMessageBox.information(self, "Success", f"Report exported to CSV at: {filepath}")
+                else:
+                    QMessageBox.warning(
+                        self, 
+                        "Warning", 
+                        "This report type cannot be exported to CSV format. Please choose PDF instead."
+                    )
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export report: {str(e)}")
+            
+    def show_report_result(self, text, title):
+        """Display the report result in a text viewer dialog."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setMinimumSize(600, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Text display
+        text_display = QTextEdit()
+        text_display.setReadOnly(True)
+        text_display.setText(text)
+        layout.addWidget(text_display)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        
+        export_button = QPushButton("Export to PDF")
+        export_button.clicked.connect(lambda: self.quick_export_pdf(title))
+        
+        button_layout.addWidget(export_button)
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+        
+        dialog.exec_()
+        
+    def quick_export_pdf(self, title):
+        """Quick export of the current report to PDF."""
+        if not hasattr(self, "last_report_data") or not hasattr(self, "last_report_type"):
+            QMessageBox.warning(self, "Warning", "No report data available for export.")
+            return
+            
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, 
+            "Save PDF Report", 
+            f"{title.lower().replace(' ', '_')}.pdf",
+            "PDF Files (*.pdf)"
+        )
+        
+        if not filepath:
+            return  # User cancelled
+            
+        try:
+            filepath = self.report_generator.export_to_pdf(
+                self.last_report_data,
+                self.last_report_type,
+                filepath
+            )
+            QMessageBox.information(self, "Success", f"Report exported to: {filepath}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export report: {str(e)}")
+            
+    def is_valid_date(self, date_string):
+        """Check if a string is a valid date in YYYY-MM-DD format."""
+        import re
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_string):
+            return False
+            
+        try:
+            import datetime
+            year, month, day = map(int, date_string.split('-'))
+            datetime.date(year, month, day)
+            return True
+        except ValueError:
+            return False
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
