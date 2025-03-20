@@ -1595,6 +1595,7 @@ class CRMWidget(QWidget):
         self.crm_manager = crm_manager
         self.theme_manager = theme_manager
         self.current_client = None
+        self.current_corporation = None
         self.init_ui()
         self.load_clients()
     
@@ -1610,20 +1611,28 @@ class CRMWidget(QWidget):
         title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
         
-        # Barra azioni
-        action_layout = QHBoxLayout()
+        # Tab widget to switch between Individual and Corporate clients
+        self.tabs = QTabWidget()
+        individual_tab = QWidget()
+        corporate_tab = QWidget()
+        
+        # Setup individual clients tab
+        individual_layout = QVBoxLayout(individual_tab)
+        
+        # Barra azioni per clienti individuali
+        individual_action_layout = QHBoxLayout()
         self.add_client_btn = QPushButton("Add Client")
         self.add_client_btn.clicked.connect(self.add_client)
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.clicked.connect(self.load_clients)
-        action_layout.addWidget(self.add_client_btn)
-        action_layout.addWidget(self.refresh_btn)
-        main_layout.addLayout(action_layout)
+        self.refresh_clients_btn = QPushButton("Refresh")
+        self.refresh_clients_btn.clicked.connect(self.load_clients)
+        individual_action_layout.addWidget(self.add_client_btn)
+        individual_action_layout.addWidget(self.refresh_clients_btn)
+        individual_layout.addLayout(individual_action_layout)
         
-        # Lista clients
+        # Lista clients individuali
         self.clients_list = QListWidget()
         self.clients_list.itemClicked.connect(self.on_client_selected)
-        main_layout.addWidget(self.clients_list)
+        individual_layout.addWidget(self.clients_list)
         
         # Bottoni per le operazioni sul client selezionato
         client_actions = QHBoxLayout()
@@ -1636,7 +1645,7 @@ class CRMWidget(QWidget):
         client_actions.addWidget(self.view_details_btn)
         client_actions.addWidget(self.edit_client_btn)
         client_actions.addWidget(self.delete_client_btn)
-        main_layout.addLayout(client_actions)
+        individual_layout.addLayout(client_actions)
         
         # Bottoni per le interazioni
         interaction_actions = QHBoxLayout()
@@ -1646,19 +1655,81 @@ class CRMWidget(QWidget):
         self.view_interactions_btn.clicked.connect(self.view_interactions)
         interaction_actions.addWidget(self.add_interaction_btn)
         interaction_actions.addWidget(self.view_interactions_btn)
-        main_layout.addLayout(interaction_actions)
+        individual_layout.addLayout(interaction_actions)
         
         # Bottone per associare prestito
         self.assign_loan_btn = QPushButton("Assign Loan")
         self.assign_loan_btn.clicked.connect(self.assign_loan)
-        main_layout.addWidget(self.assign_loan_btn)
+        individual_layout.addWidget(self.assign_loan_btn)
+        
+        # Setup corporate clients tab
+        corporate_layout = QVBoxLayout(corporate_tab)
+        
+        # Barra azioni per clienti corporate
+        corporate_action_layout = QHBoxLayout()
+        self.add_corporation_btn = QPushButton("Add Corporation")
+        self.add_corporation_btn.clicked.connect(self.add_corporation)
+        self.refresh_corporations_btn = QPushButton("Refresh")
+        self.refresh_corporations_btn.clicked.connect(self.load_corporations)
+        corporate_action_layout.addWidget(self.add_corporation_btn)
+        corporate_action_layout.addWidget(self.refresh_corporations_btn)
+        corporate_layout.addLayout(corporate_action_layout)
+        
+        # Lista corporations
+        self.corporations_list = QListWidget()
+        self.corporations_list.itemClicked.connect(self.on_corporation_selected)
+        corporate_layout.addWidget(self.corporations_list)
+        
+        # Bottoni per le operazioni sulla corporation selezionata
+        corporation_actions = QHBoxLayout()
+        self.view_corporation_details_btn = QPushButton("View Details")
+        self.view_corporation_details_btn.clicked.connect(self.view_corporation_details)
+        self.edit_corporation_btn = QPushButton("Edit Corporation")
+        self.edit_corporation_btn.clicked.connect(self.edit_corporation)
+        self.delete_corporation_btn = QPushButton("Delete Corporation")
+        self.delete_corporation_btn.clicked.connect(self.delete_corporation)
+        corporation_actions.addWidget(self.view_corporation_details_btn)
+        corporation_actions.addWidget(self.edit_corporation_btn)
+        corporation_actions.addWidget(self.delete_corporation_btn)
+        corporate_layout.addLayout(corporation_actions)
+        
+        # Bottoni per le interazioni con corporation
+        corporation_interaction_actions = QHBoxLayout()
+        self.add_corporation_interaction_btn = QPushButton("Add Interaction")
+        self.add_corporation_interaction_btn.clicked.connect(self.add_corporation_interaction)
+        self.view_corporation_interactions_btn = QPushButton("View Interactions")
+        self.view_corporation_interactions_btn.clicked.connect(self.view_corporation_interactions)
+        corporation_interaction_actions.addWidget(self.add_corporation_interaction_btn)
+        corporation_interaction_actions.addWidget(self.view_corporation_interactions_btn)
+        corporate_layout.addLayout(corporation_interaction_actions)
+        
+        # Bottone per associare prestito a corporation
+        self.assign_corporation_loan_btn = QPushButton("Assign Loan")
+        self.assign_corporation_loan_btn.clicked.connect(self.assign_corporation_loan)
+        corporate_layout.addWidget(self.assign_corporation_loan_btn)
+        
+        # Add tabs to tab widget
+        self.tabs.addTab(individual_tab, "Individual Clients")
+        self.tabs.addTab(corporate_tab, "Corporate Clients")
+        main_layout.addWidget(self.tabs)
         
         # Disabilita i pulsanti che richiedono un client selezionato
         self.toggle_client_buttons(False)
+        self.toggle_corporation_buttons(False)
+        
+        # Connect tab change signal
+        self.tabs.currentChanged.connect(self.on_tab_changed)
         
         # Applica stile
         self.update_style()
     
+    def on_tab_changed(self, index):
+        """Handle tab change event"""
+        if index == 0:  # Individual clients tab
+            self.load_clients()
+        else:  # Corporate clients tab
+            self.load_corporations()
+            
     def update_style(self):
         """Aggiorna lo stile in base al tema corrente."""
         if self.theme_manager:
@@ -1674,6 +1745,16 @@ class CRMWidget(QWidget):
         self.view_interactions_btn.setEnabled(enabled)
         self.assign_loan_btn.setEnabled(enabled)
     
+    def toggle_corporation_buttons(self, enabled):
+        """Attiva/disattiva i bottoni che richiedono una corporation selezionata."""
+        self.view_corporation_details_btn.setEnabled(enabled)
+        self.edit_corporation_btn.setEnabled(enabled)
+        self.delete_corporation_btn.setEnabled(enabled)
+        self.add_corporation_interaction_btn.setEnabled(enabled)
+        self.view_corporation_interactions_btn.setEnabled(enabled)
+        self.assign_corporation_loan_btn.setEnabled(enabled)
+    
+    # Individual client methods
     def load_clients(self):
         """Carica la lista dei clienti dal CRM."""
         try:
@@ -1782,6 +1863,121 @@ class CRMWidget(QWidget):
             
         dialog = AssignLoanDialog(
             self.current_client, 
+            parent_window.loans,
+            self.crm_manager,
+            parent=self
+        )
+        dialog.exec_()
+    
+    # Corporate client methods
+    def load_corporations(self):
+        """Carica la lista delle aziende dal CRM."""
+        try:
+            corporations = self.crm_manager.list_corporations()
+            self.corporations_list.clear()
+            
+            if not corporations:
+                self.corporations_list.addItem("No corporations found")
+                return
+                
+            for corporation in corporations:
+                item_text = corporation['company_name']
+                item = QListWidgetItem(item_text)
+                item.setData(Qt.UserRole, corporation['corporation_id'])
+                self.corporations_list.addItem(item)
+                
+            self.current_corporation = None
+            self.toggle_corporation_buttons(False)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load corporations: {str(e)}")
+    
+    def on_corporation_selected(self, item):
+        """Gestisce la selezione di un'azienda dalla lista."""
+        self.current_corporation = item.data(Qt.UserRole)
+        self.toggle_corporation_buttons(True)
+    
+    def add_corporation(self):
+        """Apre il dialogo per aggiungere una nuova azienda."""
+        dialog = CorporationDialog(self.crm_manager, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_corporations()
+    
+    def edit_corporation(self):
+        """Apre il dialogo per modificare un'azienda esistente."""
+        if not self.current_corporation:
+            return
+            
+        corporation_data = self.crm_manager.get_corporation(self.current_corporation)
+        if not corporation_data:
+            QMessageBox.warning(self, "Warning", "Corporation not found")
+            return
+            
+        dialog = CorporationDialog(self.crm_manager, corporation_data, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.load_corporations()
+    
+    def delete_corporation(self):
+        """Elimina l'azienda selezionata."""
+        if not self.current_corporation:
+            return
+            
+        reply = QMessageBox.question(
+            self, "Confirm Delete", 
+            "Are you sure you want to delete this corporation?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                self.crm_manager.delete_corporation(self.current_corporation)
+                self.load_corporations()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete corporation: {str(e)}")
+    
+    def view_corporation_details(self):
+        """Mostra i dettagli dell'azienda selezionata."""
+        if not self.current_corporation:
+            return
+            
+        corporation_data = self.crm_manager.get_corporation(self.current_corporation)
+        if not corporation_data:
+            QMessageBox.warning(self, "Warning", "Corporation not found")
+            return
+            
+        dialog = CorporationDetailsDialog(corporation_data, self.crm_manager, parent=self)
+        dialog.exec_()
+    
+    def add_corporation_interaction(self):
+        """Aggiunge una nuova interazione con l'azienda."""
+        if not self.current_corporation:
+            return
+            
+        dialog = CorporationInteractionDialog(self.current_corporation, self.crm_manager, parent=self)
+        dialog.exec_()
+    
+    def view_corporation_interactions(self):
+        """Visualizza le interazioni dell'azienda selezionata."""
+        if not self.current_corporation:
+            return
+            
+        interactions = self.crm_manager.get_corporation_interactions(self.current_corporation)
+        dialog = CorporationInteractionsListDialog(interactions, parent=self)
+        dialog.exec_()
+    
+    def assign_corporation_loan(self):
+        """Assegna un prestito all'azienda selezionata."""
+        if not self.current_corporation:
+            return
+            
+        # Ottieni la lista dei prestiti disponibili dall'app principale
+        parent_window = self.window()
+        if not hasattr(parent_window, 'loans') or not parent_window.loans:
+            QMessageBox.warning(self, "Warning", "No loans available")
+            return
+            
+        dialog = AssignCorporationLoanDialog(
+            self.current_corporation, 
             parent_window.loans,
             self.crm_manager,
             parent=self
@@ -2001,6 +2197,640 @@ class ClientDetailsDialog(FluentDialog):
         close_button.clicked.connect(self.accept)
         self.button_layout.addWidget(close_button)
 
+class CorporationDialog(FluentDialog):
+    """Dialogo per la creazione/modifica di un'azienda."""
+    def __init__(self, crm_manager, corporation_data=None, parent=None):
+        title = "Edit Corporation" if corporation_data else "Add New Corporation"
+        super().__init__(title, parent)
+        self.crm_manager = crm_manager
+        self.corporation_data = corporation_data or {}
+        self.corporation_id = corporation_data.get("corporation_id") if corporation_data else None
+        self.init_ui()
+        
+    def init_ui(self):
+        form_layout = QFormLayout()
+        
+        # Company Name
+        self.company_name = QLineEdit()
+        self.company_name.setText(self.corporation_data.get("company_name", ""))
+        form_layout.addRow("Company Name:", self.company_name)
+        
+        # Business Type
+        self.business_type = QLineEdit()
+        self.business_type.setText(self.corporation_data.get("business_type", ""))
+        form_layout.addRow("Business Type:", self.business_type)
+        
+        # Incorporation Date
+        self.incorporation_date = QLineEdit()
+        if "incorporation_date" in self.corporation_data and self.corporation_data["incorporation_date"]:
+            self.incorporation_date.setText(self.corporation_data["incorporation_date"].strftime("%Y-%m-%d"))
+        form_layout.addRow("Incorporation Date (YYYY-MM-DD):", self.incorporation_date)
+        
+        # Registration Number
+        self.registration_number = QLineEdit()
+        self.registration_number.setText(self.corporation_data.get("registration_number", ""))
+        form_layout.addRow("Registration Number:", self.registration_number)
+        
+        # Tax ID
+        self.tax_id = QLineEdit()
+        self.tax_id.setText(self.corporation_data.get("tax_id", ""))
+        form_layout.addRow("Tax ID:", self.tax_id)
+        
+        # Industry
+        self.industry = QLineEdit()
+        self.industry.setText(self.corporation_data.get("industry", ""))
+        form_layout.addRow("Industry:", self.industry)
+        
+        # Annual Revenue
+        self.annual_revenue = QDoubleSpinBox()
+        self.annual_revenue.setRange(0, 1000000000)
+        self.annual_revenue.setPrefix("€ ")
+        if "annual_revenue" in self.corporation_data:
+            self.annual_revenue.setValue(float(self.corporation_data["annual_revenue"]) if self.corporation_data["annual_revenue"] else 0)
+        form_layout.addRow("Annual Revenue:", self.annual_revenue)
+        
+        # Number of Employees
+        self.number_of_employees = QSpinBox()
+        self.number_of_employees.setRange(0, 1000000)
+        if "number_of_employees" in self.corporation_data:
+            self.number_of_employees.setValue(self.corporation_data["number_of_employees"] if self.corporation_data["number_of_employees"] else 0)
+        form_layout.addRow("Number of Employees:", self.number_of_employees)
+        
+        # Headquarters Address
+        self.headquarters_address = QLineEdit()
+        self.headquarters_address.setText(self.corporation_data.get("headquarters_address", ""))
+        form_layout.addRow("Headquarters Address:", self.headquarters_address)
+        
+        # City
+        self.city = QLineEdit()
+        self.city.setText(self.corporation_data.get("city", ""))
+        form_layout.addRow("City:", self.city)
+        
+        # State
+        self.state = QLineEdit()
+        self.state.setText(self.corporation_data.get("state", ""))
+        form_layout.addRow("State:", self.state)
+        
+        # ZIP Code
+        self.zip_code = QLineEdit()
+        self.zip_code.setText(self.corporation_data.get("zip_code", ""))
+        form_layout.addRow("ZIP Code:", self.zip_code)
+        
+        # Country
+        self.country = QLineEdit()
+        self.country.setText(self.corporation_data.get("country", ""))
+        form_layout.addRow("Country:", self.country)
+        
+        # Phone
+        self.phone = QLineEdit()
+        self.phone.setText(self.corporation_data.get("phone", ""))
+        form_layout.addRow("Phone:", self.phone)
+        
+        # Email
+        self.email = QLineEdit()
+        self.email.setText(self.corporation_data.get("email", ""))
+        form_layout.addRow("Email:", self.email)
+        
+        # Website
+        self.website = QLineEdit()
+        self.website.setText(self.corporation_data.get("website", ""))
+        form_layout.addRow("Website:", self.website)
+        
+        # Primary Contact Name
+        self.primary_contact_name = QLineEdit()
+        self.primary_contact_name.setText(self.corporation_data.get("primary_contact_name", ""))
+        form_layout.addRow("Primary Contact Name:", self.primary_contact_name)
+        
+        # Primary Contact Role
+        self.primary_contact_role = QLineEdit()
+        self.primary_contact_role.setText(self.corporation_data.get("primary_contact_role", ""))
+        form_layout.addRow("Primary Contact Role:", self.primary_contact_role)
+        
+        self.main_layout.insertLayout(0, form_layout)
+        
+        # Save and Cancel buttons
+        self.save_button = QPushButton("Save Corporation")
+        self.save_button.clicked.connect(self.save_corporation)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        
+        self.button_layout.addWidget(self.cancel_button)
+        self.button_layout.addWidget(self.save_button)
+    
+    def save_corporation(self):
+        """Salva i dati dell'azienda."""
+        try:
+            # Validazione dei campi obbligatori
+            if not self.company_name.text().strip():
+                QMessageBox.warning(self, "Validation Error", "Company name is required")
+                return
+            
+            # Prepara i dati dell'azienda
+            corporation_data = {
+                "company_name": self.company_name.text().strip(),
+                "business_type": self.business_type.text().strip(),
+                "registration_number": self.registration_number.text().strip(),
+                "tax_id": self.tax_id.text().strip(),
+                "industry": self.industry.text().strip(),
+                "annual_revenue": self.annual_revenue.value(),
+                "number_of_employees": self.number_of_employees.value(),
+                "headquarters_address": self.headquarters_address.text().strip(),
+                "city": self.city.text().strip(),
+                "state": self.state.text().strip(),
+                "zip_code": self.zip_code.text().strip(),
+                "country": self.country.text().strip(),
+                "phone": self.phone.text().strip(),
+                "email": self.email.text().strip(),
+                "website": self.website.text().strip(),
+                "primary_contact_name": self.primary_contact_name.text().strip(),
+                "primary_contact_role": self.primary_contact_role.text().strip()
+            }
+            
+            # Gestione della data di incorporazione
+            if self.incorporation_date.text().strip():
+                try:
+                    from datetime import datetime
+                    corporation_data["incorporation_date"] = datetime.strptime(
+                        self.incorporation_date.text().strip(), 
+                        "%Y-%m-%d"
+                    ).date()
+                except ValueError:
+                    QMessageBox.warning(
+                        self, 
+                        "Validation Error", 
+                        "Invalid incorporation date format. Please use YYYY-MM-DD"
+                    )
+                    return
+            
+            # Aggiorna o crea l'azienda
+            if self.corporation_id:
+                self.crm_manager.update_corporation(self.corporation_id, corporation_data)
+            else:
+                self.crm_manager.add_corporation(corporation_data)
+                
+            self.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save corporation: {str(e)}")
+
+class CorporationDetailsDialog(FluentDialog):
+    """Dialogo per la visualizzazione dei dettagli di un'azienda."""
+    def __init__(self, corporation_data, crm_manager, parent=None):
+        super().__init__(f"Corporation Details: {corporation_data['company_name']}", parent)
+        self.corporation_data = corporation_data
+        self.crm_manager = crm_manager
+        self.init_ui()
+        
+    def init_ui(self):
+        # Crea un widget di testo per mostrare i dettagli
+        details_text = QTextEdit()
+        details_text.setReadOnly(True)
+        
+        # Formatta i dettagli dell'azienda
+        details = f"""<h2>{self.corporation_data['company_name']}</h2>
+        <p><b>Corporation ID:</b> {self.corporation_data['corporation_id']}</p>
+        <p><b>Business Type:</b> {self.corporation_data.get('business_type', 'Not provided')}</p>
+        <p><b>Incorporation Date:</b> {self.corporation_data.get('incorporation_date', 'Not provided')}</p>
+        <p><b>Registration Number:</b> {self.corporation_data.get('registration_number', 'Not provided')}</p>
+        <p><b>Tax ID:</b> {self.corporation_data.get('tax_id', 'Not provided')}</p>
+        <p><b>Industry:</b> {self.corporation_data.get('industry', 'Not provided')}</p>
+        <p><b>Financial Information:</b><br>
+        Annual Revenue: €{float(self.corporation_data.get('annual_revenue', 0)):,.2f}<br>
+        Number of Employees: {self.corporation_data.get('number_of_employees', 'Not provided')}</p>
+        <p><b>Contact:</b><br>
+        Phone: {self.corporation_data.get('phone', 'Not provided')}<br>
+        Email: {self.corporation_data.get('email', 'Not provided')}<br>
+        Website: {self.corporation_data.get('website', 'Not provided')}</p>
+        <p><b>Address:</b><br>
+        {self.corporation_data.get('headquarters_address', '')}<br>
+        {self.corporation_data.get('city', '')}, {self.corporation_data.get('state', '')} {self.corporation_data.get('zip_code', '')}<br>
+        {self.corporation_data.get('country', '')}</p>
+        <p><b>Primary Contact:</b><br>
+        Name: {self.corporation_data.get('primary_contact_name', 'Not provided')}<br>
+        Role: {self.corporation_data.get('primary_contact_role', 'Not provided')}</p>
+        <p><b>Created:</b> {self.corporation_data.get('created_at', '')}<br>
+        <b>Last Updated:</b> {self.corporation_data.get('updated_at', '')}</p>
+        """
+        
+        details_text.setHtml(details)
+        self.main_layout.insertWidget(0, details_text)
+        
+        # Ottieni e mostra i prestiti associati
+        loans_label = QLabel("<b>Associated Loans:</b>")
+        loans_list = QListWidget()
+        
+        try:
+            corporation_loans = self.crm_manager.get_corporation_loans(self.corporation_data['corporation_id'])
+            if corporation_loans:
+                for loan_data in corporation_loans:
+                    item_text = f"Loan {loan_data['loan_id']} - €{float(loan_data['loan_amount']):,.2f}"
+                    loans_list.addItem(item_text)
+            else:
+                loans_list.addItem("No loans associated with this corporation")
+        except Exception as e:
+            loans_list.addItem(f"Error loading loans: {str(e)}")
+            
+        self.main_layout.insertWidget(1, loans_label)
+        self.main_layout.insertWidget(2, loans_list)
+        
+        # Pulsante per chiudere
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
+
+class CorporationInteractionDialog(FluentDialog):
+    """Dialogo per aggiungere un'interazione con un'azienda."""
+    def __init__(self, corporation_id, crm_manager, parent=None):
+        super().__init__("Add Corporation Interaction", parent)
+        self.corporation_id = corporation_id
+        self.crm_manager = crm_manager
+        self.init_ui()
+        
+    def init_ui(self):
+        form_layout = QFormLayout()
+        
+        # Tipo di interazione
+        self.interaction_type = QComboBox()
+        self.interaction_type.addItems([
+            "phone", "email", "meeting", "visit", "social", "videoconference", "other"
+        ])
+        form_layout.addRow("Interaction Type:", self.interaction_type)
+        
+        # Note sull'interazione
+        self.notes = QTextEdit()
+        self.notes.setPlaceholderText("Enter interaction details here...")
+        form_layout.addRow("Notes:", self.notes)
+        
+        self.main_layout.insertLayout(0, form_layout)
+        
+        # Pulsanti
+        save_button = QPushButton("Save Interaction")
+        save_button.clicked.connect(self.save_interaction)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        self.button_layout.addWidget(cancel_button)
+        self.button_layout.addWidget(save_button)
+    
+    def save_interaction(self):
+        """Salva l'interazione con l'azienda."""
+        try:
+            interaction_type = self.interaction_type.currentText()
+            notes = self.notes.toPlainText().strip()
+            
+            if not notes:
+                QMessageBox.warning(self, "Validation Error", "Notes cannot be empty")
+                return
+                
+            self.crm_manager.record_corporation_interaction(
+                self.corporation_id,
+                interaction_type,
+                notes
+            )
+            
+            self.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save interaction: {str(e)}")
+            
+class CorporationDialog(FluentDialog):
+    """Dialogo per la creazione/modifica di un'azienda."""
+    def __init__(self, crm_manager, corporation_data=None, parent=None):
+        title = "Edit Corporation" if corporation_data else "Add New Corporation"
+        super().__init__(title, parent)
+        self.crm_manager = crm_manager
+        self.corporation_data = corporation_data or {}
+        self.corporation_id = corporation_data.get("corporation_id") if corporation_data else None
+        self.init_ui()
+        
+    def init_ui(self):
+        form_layout = QFormLayout()
+        
+        # Company Name
+        self.company_name = QLineEdit()
+        self.company_name.setText(self.corporation_data.get("company_name", ""))
+        form_layout.addRow("Company Name:", self.company_name)
+        
+        # Business Type
+        self.business_type = QLineEdit()
+        self.business_type.setText(self.corporation_data.get("business_type", ""))
+        form_layout.addRow("Business Type:", self.business_type)
+        
+        # Incorporation Date
+        self.incorporation_date = QLineEdit()
+        if "incorporation_date" in self.corporation_data and self.corporation_data["incorporation_date"]:
+            self.incorporation_date.setText(self.corporation_data["incorporation_date"].strftime("%Y-%m-%d"))
+        form_layout.addRow("Incorporation Date (YYYY-MM-DD):", self.incorporation_date)
+        
+        # Registration Number
+        self.registration_number = QLineEdit()
+        self.registration_number.setText(self.corporation_data.get("registration_number", ""))
+        form_layout.addRow("Registration Number:", self.registration_number)
+        
+        # Tax ID
+        self.tax_id = QLineEdit()
+        self.tax_id.setText(self.corporation_data.get("tax_id", ""))
+        form_layout.addRow("Tax ID:", self.tax_id)
+        
+        # Industry
+        self.industry = QLineEdit()
+        self.industry.setText(self.corporation_data.get("industry", ""))
+        form_layout.addRow("Industry:", self.industry)
+        
+        # Annual Revenue
+        self.annual_revenue = QDoubleSpinBox()
+        self.annual_revenue.setRange(0, 1000000000)
+        self.annual_revenue.setPrefix("€ ")
+        if "annual_revenue" in self.corporation_data:
+            self.annual_revenue.setValue(float(self.corporation_data["annual_revenue"]) if self.corporation_data["annual_revenue"] else 0)
+        form_layout.addRow("Annual Revenue:", self.annual_revenue)
+        
+        # Number of Employees
+        self.number_of_employees = QSpinBox()
+        self.number_of_employees.setRange(0, 1000000)
+        if "number_of_employees" in self.corporation_data:
+            self.number_of_employees.setValue(self.corporation_data["number_of_employees"] if self.corporation_data["number_of_employees"] else 0)
+        form_layout.addRow("Number of Employees:", self.number_of_employees)
+        
+        # Headquarters Address
+        self.headquarters_address = QLineEdit()
+        self.headquarters_address.setText(self.corporation_data.get("headquarters_address", ""))
+        form_layout.addRow("Headquarters Address:", self.headquarters_address)
+        
+        # City
+        self.city = QLineEdit()
+        self.city.setText(self.corporation_data.get("city", ""))
+        form_layout.addRow("City:", self.city)
+        
+        # State
+        self.state = QLineEdit()
+        self.state.setText(self.corporation_data.get("state", ""))
+        form_layout.addRow("State:", self.state)
+        
+        # ZIP Code
+        self.zip_code = QLineEdit()
+        self.zip_code.setText(self.corporation_data.get("zip_code", ""))
+        form_layout.addRow("ZIP Code:", self.zip_code)
+        
+        # Country
+        self.country = QLineEdit()
+        self.country.setText(self.corporation_data.get("country", ""))
+        form_layout.addRow("Country:", self.country)
+        
+        # Phone
+        self.phone = QLineEdit()
+        self.phone.setText(self.corporation_data.get("phone", ""))
+        form_layout.addRow("Phone:", self.phone)
+        
+        # Email
+        self.email = QLineEdit()
+        self.email.setText(self.corporation_data.get("email", ""))
+        form_layout.addRow("Email:", self.email)
+        
+        # Website
+        self.website = QLineEdit()
+        self.website.setText(self.corporation_data.get("website", ""))
+        form_layout.addRow("Website:", self.website)
+        
+        # Primary Contact Name
+        self.primary_contact_name = QLineEdit()
+        self.primary_contact_name.setText(self.corporation_data.get("primary_contact_name", ""))
+        form_layout.addRow("Primary Contact Name:", self.primary_contact_name)
+        
+        # Primary Contact Role
+        self.primary_contact_role = QLineEdit()
+        self.primary_contact_role.setText(self.corporation_data.get("primary_contact_role", ""))
+        form_layout.addRow("Primary Contact Role:", self.primary_contact_role)
+        
+        self.main_layout.insertLayout(0, form_layout)
+        
+        # Save and Cancel buttons
+        self.save_button = QPushButton("Save Corporation")
+        self.save_button.clicked.connect(self.save_corporation)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        
+        self.button_layout.addWidget(self.cancel_button)
+        self.button_layout.addWidget(self.save_button)
+    
+    def save_corporation(self):
+        """Salva i dati dell'azienda."""
+        try:
+            # Validazione dei campi obbligatori
+            if not self.company_name.text().strip():
+                QMessageBox.warning(self, "Validation Error", "Company name is required")
+                return
+            
+            # Prepara i dati dell'azienda
+            corporation_data = {
+                "company_name": self.company_name.text().strip(),
+                "business_type": self.business_type.text().strip(),
+                "registration_number": self.registration_number.text().strip(),
+                "tax_id": self.tax_id.text().strip(),
+                "industry": self.industry.text().strip(),
+                "annual_revenue": self.annual_revenue.value(),
+                "number_of_employees": self.number_of_employees.value(),
+                "headquarters_address": self.headquarters_address.text().strip(),
+                "city": self.city.text().strip(),
+                "state": self.state.text().strip(),
+                "zip_code": self.zip_code.text().strip(),
+                "country": self.country.text().strip(),
+                "phone": self.phone.text().strip(),
+                "email": self.email.text().strip(),
+                "website": self.website.text().strip(),
+                "primary_contact_name": self.primary_contact_name.text().strip(),
+                "primary_contact_role": self.primary_contact_role.text().strip()
+            }
+            
+            # Gestione della data di incorporazione
+            if self.incorporation_date.text().strip():
+                try:
+                    from datetime import datetime
+                    corporation_data["incorporation_date"] = datetime.strptime(
+                        self.incorporation_date.text().strip(), 
+                        "%Y-%m-%d"
+                    ).date()
+                except ValueError:
+                    QMessageBox.warning(
+                        self, 
+                        "Validation Error", 
+                        "Invalid incorporation date format. Please use YYYY-MM-DD"
+                    )
+                    return
+            
+            # Aggiorna o crea l'azienda
+            if self.corporation_id:
+                self.crm_manager.update_corporation(self.corporation_id, corporation_data)
+            else:
+                self.crm_manager.add_corporation(corporation_data)
+                
+            self.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save corporation: {str(e)}")
+
+class CorporationDetailsDialog(FluentDialog):
+    """Dialogo per la visualizzazione dei dettagli di un'azienda."""
+    def __init__(self, corporation_data, crm_manager, parent=None):
+        super().__init__(f"Corporation Details: {corporation_data['company_name']}", parent)
+        self.corporation_data = corporation_data
+        self.crm_manager = crm_manager
+        self.init_ui()
+        
+    def init_ui(self):
+        # Crea un widget di testo per mostrare i dettagli
+        details_text = QTextEdit()
+        details_text.setReadOnly(True)
+        
+        # Formatta i dettagli dell'azienda
+        details = f"""<h2>{self.corporation_data['company_name']}</h2>
+        <p><b>Corporation ID:</b> {self.corporation_data['corporation_id']}</p>
+        <p><b>Business Type:</b> {self.corporation_data.get('business_type', 'Not provided')}</p>
+        <p><b>Incorporation Date:</b> {self.corporation_data.get('incorporation_date', 'Not provided')}</p>
+        <p><b>Registration Number:</b> {self.corporation_data.get('registration_number', 'Not provided')}</p>
+        <p><b>Tax ID:</b> {self.corporation_data.get('tax_id', 'Not provided')}</p>
+        <p><b>Industry:</b> {self.corporation_data.get('industry', 'Not provided')}</p>
+        <p><b>Financial Information:</b><br>
+        Annual Revenue: €{float(self.corporation_data.get('annual_revenue', 0)):,.2f}<br>
+        Number of Employees: {self.corporation_data.get('number_of_employees', 'Not provided')}</p>
+        <p><b>Contact:</b><br>
+        Phone: {self.corporation_data.get('phone', 'Not provided')}<br>
+        Email: {self.corporation_data.get('email', 'Not provided')}<br>
+        Website: {self.corporation_data.get('website', 'Not provided')}</p>
+        <p><b>Address:</b><br>
+        {self.corporation_data.get('headquarters_address', '')}<br>
+        {self.corporation_data.get('city', '')}, {self.corporation_data.get('state', '')} {self.corporation_data.get('zip_code', '')}<br>
+        {self.corporation_data.get('country', '')}</p>
+        <p><b>Primary Contact:</b><br>
+        Name: {self.corporation_data.get('primary_contact_name', 'Not provided')}<br>
+        Role: {self.corporation_data.get('primary_contact_role', 'Not provided')}</p>
+        <p><b>Created:</b> {self.corporation_data.get('created_at', '')}<br>
+        <b>Last Updated:</b> {self.corporation_data.get('updated_at', '')}</p>
+        """
+        
+        details_text.setHtml(details)
+        self.main_layout.insertWidget(0, details_text)
+        
+        # Ottieni e mostra i prestiti associati
+        loans_label = QLabel("<b>Associated Loans:</b>")
+        loans_list = QListWidget()
+        
+        try:
+            corporation_loans = self.crm_manager.get_corporation_loans(self.corporation_data['corporation_id'])
+            if corporation_loans:
+                for loan_data in corporation_loans:
+                    item_text = f"Loan {loan_data['loan_id']} - €{float(loan_data['loan_amount']):,.2f}"
+                    loans_list.addItem(item_text)
+            else:
+                loans_list.addItem("No loans associated with this corporation")
+        except Exception as e:
+            loans_list.addItem(f"Error loading loans: {str(e)}")
+            
+        self.main_layout.insertWidget(1, loans_label)
+        self.main_layout.insertWidget(2, loans_list)
+        
+        # Pulsante per chiudere
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
+
+class CorporationInteractionsListDialog(FluentDialog):
+    """Dialogo per visualizzare la lista delle interazioni con un'azienda."""
+    def __init__(self, interactions, parent=None):
+        super().__init__("Corporation Interactions", parent)
+        self.interactions = interactions
+        self.init_ui()
+        
+    def init_ui(self):
+        # Crea una tabella per le interazioni
+        table = QTableWidget()
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["Date", "Type", "Notes", "Interaction ID"])
+        
+        # Popola la tabella con le interazioni
+        table.setRowCount(len(self.interactions))
+        
+        for row, interaction in enumerate(self.interactions):
+            # Data
+            date_item = QTableWidgetItem(str(interaction.get('interaction_date', '')))
+            table.setItem(row, 0, date_item)
+            
+            # Tipo
+            type_item = QTableWidgetItem(str(interaction.get('interaction_type', '')))
+            table.setItem(row, 1, type_item)
+            
+            # Note
+            notes_item = QTableWidgetItem(str(interaction.get('notes', '')))
+            table.setItem(row, 2, notes_item)
+            
+            # ID interazione
+            id_item = QTableWidgetItem(str(interaction.get('interaction_id', '')))
+            table.setItem(row, 3, id_item)
+        
+        # Imposta le dimensioni delle colonne
+        table.setColumnWidth(0, 150)  # Data
+        table.setColumnWidth(1, 100)  # Tipo
+        table.setColumnWidth(2, 300)  # Note
+        table.resizeRowsToContents()
+        
+        self.main_layout.insertWidget(0, table)
+        
+        # Pulsante per chiudere
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        self.button_layout.addWidget(close_button)
+
+class AssignCorporationLoanDialog(FluentDialog):
+    """Dialogo per assegnare un prestito a un'azienda."""
+    def __init__(self, corporation_id, available_loans, crm_manager, parent=None):
+        super().__init__("Assign Loan to Corporation", parent)
+        self.corporation_id = corporation_id
+        self.available_loans = available_loans
+        self.crm_manager = crm_manager
+        self.init_ui()
+        
+    def init_ui(self):
+        form_layout = QFormLayout()
+        
+        # Crea una dropdown con i prestiti disponibili
+        self.loan_combo = QComboBox()
+        for i, loan in enumerate(self.available_loans):
+            loan_text = f"Loan {i+1} - {loan.loan_id} - €{loan.loan_amount:,.2f}"
+            self.loan_combo.addItem(loan_text, loan.loan_id)
+            
+        form_layout.addRow("Select Loan:", self.loan_combo)
+        self.main_layout.insertLayout(0, form_layout)
+        
+        # Pulsanti
+        assign_button = QPushButton("Assign Loan")
+        assign_button.clicked.connect(self.assign_loan)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        self.button_layout.addWidget(cancel_button)
+        self.button_layout.addWidget(assign_button)
+    
+    def assign_loan(self):
+        """Assegna il prestito selezionato all'azienda."""
+        if self.loan_combo.currentIndex() < 0:
+            QMessageBox.warning(self, "Warning", "Please select a loan")
+            return
+            
+        try:
+            loan_id = self.loan_combo.currentData()
+            self.crm_manager.assign_loan_to_corporation(self.corporation_id, loan_id)
+            QMessageBox.information(
+                self, 
+                "Success", 
+                "Loan successfully assigned to corporation"
+            )
+            self.accept()
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                "Error", 
+                f"Failed to assign loan: {str(e)}"
+            )
 
 class InteractionDialog(FluentDialog):
     """Dialogo per aggiungere un'interazione con un cliente."""
