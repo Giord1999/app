@@ -18,9 +18,6 @@ import matplotlib.pyplot as plt
 import io
 from PIL import Image as PILImage
 
-#TODO: solve pdf exporting issues
-#TODO: implementa la possibilitò 
-
 _original_getSampleStyleSheet = getSampleStyleSheet
 
 def _extended_getSampleStyleSheet():
@@ -606,7 +603,7 @@ class LoanReport:
         
         # Aggiungi i dettagli del prestito
         loan_details = [
-            f"Importo prestito: {data['Initial Balance'].iloc[0]:,.2f}",
+            f"Importo prestito: {data['Initial Debt'].iloc[0]:,.2f}",   
             f"Durata: {len(data)} rate",
             f"Rata: {data['Payment'].iloc[0]:,.2f}"
         ]
@@ -638,7 +635,7 @@ class LoanReport:
             self._add_chart_to_pdf(
                 elements, 
                 {
-                    "Capitale residuo": data["Remaining Balance"].values,
+                    "Capitale residuo": data["Balance"].values,
                     "Interessi cumulati": data["Interest"].cumsum().values
                 },
                 "Andamento Capitale Residuo e Interessi",
@@ -647,20 +644,19 @@ class LoanReport:
             
     def _add_amortization_table(self, elements, data):
         """Aggiunge una tabella di ammortamento al PDF."""
-        # Seleziona solo le colonne principali per il report
-        display_cols = ["Period", "Payment", "Principal", "Interest", "Remaining Balance"]
+        # Seleziona solo le colonne principali per il report con mapping corretto
+        display_cols = ["Initial Debt", "Payment", "Principal", "Interest", "Balance"]
         display_cols = [col for col in display_cols if col in data.columns]
         
         # Prepara intestazioni tradotte
         header_map = {
-            "Period": "Periodo", 
+            "Initial Debt": "Debito Iniziale", 
             "Payment": "Rata", 
             "Principal": "Capitale", 
             "Interest": "Interessi", 
-            "Remaining Balance": "Residuo"
+            "Balance": "Residuo"
         }
-        
-        # Crea tabella
+            # Crea tabella
         table_data = [[header_map.get(col, col) for col in display_cols]]
         
         # Aggiungi righe con formattazione
