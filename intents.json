@@ -57,9 +57,19 @@
         {
             "tag": "create_loan",
             "patterns": [
+                "Crea un prestito",
+                "Apri un nuovo prestito",
+                "Inizia un nuovo prestito",
+                "Nuovo prestito",
                 "Crea un nuovo prestito",
                 "Aggiungi un prestito",
                 "Voglio fare un prestito",
+                "Voglio aprire un prestito",
+                "Voglio iniziare un prestito",
+                "Voglio creare un prestito",
+                "Voglio aggiungere un prestito",
+                "Voglio richiedere un prestito",
+                "Voglio richiedere un nuovo prestito",
                 "Ho bisogno di un nuovo finanziamento",
                 "Vorrei richiedere un prestito",
                 "Come posso aprire un nuovo prestito?",
@@ -90,6 +100,12 @@
         {
             "tag": "delete_loan",
             "patterns": [
+                "Elimina il prestito",
+                "Cancella il prestito",
+                "Rimuovi il prestito",
+                "Voglio eliminare un prestito",
+                "Voglio cancellare un prestito",
+                "Voglio rimuovere un prestito",
                 "Elimina un prestito",
                 "Cancella un prestito",
                 "Rimuovi un prestito"
@@ -247,7 +263,7 @@
                 "Seleziona i prestiti da confrontare (puoi indicare più indici separati da una virgola)."
             ]
         },
-
+        
         {
             "tag": "display_loans",
             "patterns": [
@@ -258,6 +274,346 @@
             ],
             "responses": [
                 "Ecco la lista dei prestiti salvati nel database."
+            ]
+        },
+
+        {
+            "tag": "add_client",
+            "patterns": [
+                "Aggiungi un cliente",
+                "Registra un nuovo cliente",
+                "Crea un cliente",
+                "Nuovo cliente",
+                "Inserisci cliente",
+                "Aggiungi persona fisica",
+                "Registra nuovo utente privato",
+                "Inserisci dati personali cliente",
+                "Crea scheda cliente"
+            ],
+            "responses": [
+                "Per aggiungere un nuovo cliente ti guiderò nella raccolta dei dati necessari. Iniziamo con nome e cognome."
+            ]
+        },
+        
+        {
+            "tag": "update_client",
+            "patterns": [
+                "Aggiorna cliente",
+                "Modifica cliente",
+                "Cambia dati cliente",
+                "Aggiorna informazioni cliente",
+                "Modifica scheda cliente",
+                "Aggiorna anagrafica cliente",
+                "Cambia dati personali del cliente",
+                "Modifica informazioni persona"
+            ],
+            "responses": [
+                "Per aggiornare un cliente, inserisci prima l'ID del cliente che desideri modificare."
+            ]
+        },
+        
+        {
+            "tag": "delete_client",
+            "patterns": [
+                "Elimina cliente",
+                "Cancella cliente",
+                "Rimuovi cliente",
+                "Elimina persona",
+                "Cancella utente",
+                "Elimina dati cliente",
+                "Rimuovi persona fisica"
+            ],
+            "responses": [
+                "Per eliminare un cliente, inserisci l'ID del cliente che desideri rimuovere. Attenzione: questa operazione cancellerà anche tutte le interazioni associate."
+            ]
+        },
+        
+        {
+            "tag": "get_client",
+            "patterns": [
+                "Visualizza cliente",
+                "Mostra cliente",
+                "Dettagli cliente",
+                "Informazioni cliente",
+                "Vedi cliente",
+                "Trova cliente",
+                "Cerca cliente",
+                "Mostrami i dati del cliente",
+                "Visualizza scheda cliente"
+            ],
+            "responses": [
+                "Per visualizzare i dettagli di un cliente, inserisci il suo ID."
+            ]
+        },
+        
+        {
+            "tag": "list_clients",
+            "patterns": [
+                "Elenco clienti",
+                "Lista clienti",
+                "Mostra tutti i clienti",
+                "Visualizza clienti",
+                "Elenca clienti",
+                "Mostrami i clienti",
+                "Lista delle persone",
+                "Elenco delle persone fisiche"
+            ],
+            "responses": [
+                "Ecco l'elenco di tutti i clienti registrati."
+            ]
+        },
+        
+        {
+            "tag": "assign_loan_to_client",
+            "patterns": [
+                "Assegna prestito a cliente",
+                "Collega prestito a cliente",
+                "Associa prestito a persona",
+                "Assegna finanziamento a cliente",
+                "Associa cliente a prestito",
+                "Collega cliente e prestito",
+                "Assegna mutuo a cliente"
+            ],
+            "responses": [
+                "Per associare un prestito a un cliente, inserisci l'ID del cliente e l'ID del prestito."
+            ]
+        },
+        
+        {
+            "tag": "record_client_interaction",
+            "patterns": [
+                "Registra interazione cliente",
+                "Aggiungi contatto cliente",
+                "Registra chiamata cliente",
+                "Aggiungi email cliente",
+                "Registra incontro cliente",
+                "Aggiungi nota cliente",
+                "Salva interazione con persona",
+                "Registra comunicazione con cliente"
+            ],
+            "responses": [
+                "Per registrare una nuova interazione con il cliente, inserisci l'ID del cliente, il tipo di interazione e le note."
+            ]
+        },
+        
+        {
+            "tag": "get_client_interactions",
+            "patterns": [
+                "Visualizza interazioni cliente",
+                "Mostra contatti cliente",
+                "Elenco interazioni cliente",
+                "Storico cliente",
+                "Cronologia cliente",
+                "Mostra comunicazioni cliente",
+                "Lista interazioni persona",
+                "Visualizza storico contatti cliente"
+            ],
+            "responses": [
+                "Per visualizzare le interazioni di un cliente, inserisci il suo ID."
+            ]
+        },
+        
+        {
+            "tag": "get_client_loans",
+            "patterns": [
+                "Visualizza prestiti cliente",
+                "Mostra finanziamenti cliente",
+                "Elenco prestiti cliente",
+                "Prestiti della persona",
+                "Finanziamenti del cliente",
+                "Mutui del cliente",
+                "Lista prestiti del cliente",
+                "Vedi prestiti associati al cliente"
+            ],
+            "responses": [
+                "Per visualizzare i prestiti di un cliente, inserisci il suo ID."
+            ]
+        },
+        
+        {
+            "tag": "get_client_details",
+            "patterns": [
+                "Profilo cliente completo",
+                "Scheda completa cliente",
+                "Tutti i dati cliente",
+                "Dettagli completi cliente",
+                "Profilo completo persona",
+                "Visualizza profilo completo cliente",
+                "Mostra scheda dettagliata cliente",
+                "Riepilogo totale cliente"
+            ],
+            "responses": [
+                "Per visualizzare il profilo completo di un cliente con prestiti e interazioni, inserisci il suo ID."
+            ]
+        },
+        
+        {
+            "tag": "add_corporation",
+            "patterns": [
+                "Aggiungi azienda",
+                "Registra nuova azienda",
+                "Crea azienda",
+                "Nuova impresa",
+                "Inserisci società",
+                "Registra impresa",
+                "Aggiungi corporation",
+                "Crea scheda azienda",
+                "Inserisci ditta"
+            ],
+            "responses": [
+                "Per aggiungere una nuova azienda ti guiderò nella raccolta dei dati necessari. Iniziamo con la ragione sociale."
+            ]
+        },
+        
+        {
+            "tag": "update_corporation",
+            "patterns": [
+                "Aggiorna azienda",
+                "Modifica azienda",
+                "Cambia dati azienda",
+                "Aggiorna informazioni società",
+                "Modifica scheda impresa",
+                "Aggiorna dati corporation",
+                "Cambia dettagli impresa",
+                "Modifica informazioni aziendali"
+            ],
+            "responses": [
+                "Per aggiornare un'azienda, inserisci prima l'ID dell'azienda che desideri modificare."
+            ]
+        },
+        
+        {
+            "tag": "delete_corporation",
+            "patterns": [
+                "Elimina azienda",
+                "Cancella azienda",
+                "Rimuovi impresa",
+                "Elimina società",
+                "Cancella corporation",
+                "Elimina dati azienda",
+                "Rimuovi società cliente"
+            ],
+            "responses": [
+                "Per eliminare un'azienda, inserisci l'ID dell'azienda che desideri rimuovere. Attenzione: questa operazione cancellerà anche tutte le interazioni associate."
+            ]
+        },
+        
+        {
+            "tag": "get_corporation",
+            "patterns": [
+                "Visualizza azienda",
+                "Mostra azienda",
+                "Dettagli azienda",
+                "Informazioni società",
+                "Vedi impresa",
+                "Trova azienda",
+                "Cerca corporation",
+                "Mostrami i dati dell'azienda",
+                "Visualizza scheda impresa"
+            ],
+            "responses": [
+                "Per visualizzare i dettagli di un'azienda, inserisci il suo ID."
+            ]
+        },
+        
+        {
+            "tag": "list_corporations",
+            "patterns": [
+                "Elenco aziende",
+                "Lista aziende",
+                "Mostra tutte le aziende",
+                "Visualizza società",
+                "Elenca corporations",
+                "Mostrami le imprese",
+                "Lista delle società",
+                "Elenco delle imprese clienti"
+            ],
+            "responses": [
+                "Ecco l'elenco di tutte le aziende registrate."
+            ]
+        },
+        
+        {
+            "tag": "assign_loan_to_corporation",
+            "patterns": [
+                "Assegna prestito a azienda",
+                "Collega prestito a società",
+                "Associa prestito a impresa",
+                "Assegna finanziamento a corporation",
+                "Associa azienda a prestito",
+                "Collega società e prestito",
+                "Assegna mutuo a impresa"
+            ],
+            "responses": [
+                "Per associare un prestito a un'azienda, inserisci l'ID dell'azienda e l'ID del prestito."
+            ]
+        },
+        
+        {
+            "tag": "record_corporation_interaction",
+            "patterns": [
+                "Registra interazione azienda",
+                "Aggiungi contatto azienda",
+                "Registra chiamata società",
+                "Aggiungi email impresa",
+                "Registra incontro corporation",
+                "Aggiungi nota azienda",
+                "Salva interazione con società",
+                "Registra comunicazione con impresa"
+            ],
+            "responses": [
+                "Per registrare una nuova interazione con l'azienda, inserisci l'ID dell'azienda, il tipo di interazione e le note."
+            ]
+        },
+        
+        {
+            "tag": "get_corporation_interactions",
+            "patterns": [
+                "Visualizza interazioni azienda",
+                "Mostra contatti società",
+                "Elenco interazioni impresa",
+                "Storico azienda",
+                "Cronologia corporation",
+                "Mostra comunicazioni società",
+                "Lista interazioni impresa",
+                "Visualizza storico contatti azienda"
+            ],
+            "responses": [
+                "Per visualizzare le interazioni di un'azienda, inserisci il suo ID."
+            ]
+        },
+        
+        {
+            "tag": "get_corporation_loans",
+            "patterns": [
+                "Visualizza prestiti azienda",
+                "Mostra finanziamenti società",
+                "Elenco prestiti impresa",
+                "Prestiti della corporation",
+                "Finanziamenti della società",
+                "Mutui dell'azienda",
+                "Lista prestiti dell'impresa",
+                "Vedi prestiti associati all'azienda"
+            ],
+            "responses": [
+                "Per visualizzare i prestiti di un'azienda, inserisci il suo ID."
+            ]
+        },
+        
+        {
+            "tag": "get_corporation_details",
+            "patterns": [
+                "Profilo azienda completo",
+                "Scheda completa società",
+                "Tutti i dati impresa",
+                "Dettagli completi corporation",
+                "Profilo completo azienda",
+                "Visualizza profilo completo società",
+                "Mostra scheda dettagliata impresa",
+                "Riepilogo totale azienda"
+            ],
+            "responses": [
+                "Per visualizzare il profilo completo di un'azienda con prestiti e interazioni, inserisci il suo ID."
             ]
         }
     ]
