@@ -109,7 +109,7 @@ class FluentStylesheet:
                 background-color: #0078d4;
                 color: white;
                 border: none;
-                border-radius: 8px;
+                border-radius: 12px;
                 padding: 10px 20px;
                 font-size: 11pt;
                 min-width: 60px;
@@ -127,6 +127,37 @@ class FluentStylesheet:
                 background-color: #cccccc;
                 
             }
+
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+                border: 1px solid #d0d0d0;
+                border-radius: 12px;
+                padding: 6px 12px;
+                background-color: #ffffff;
+            }
+            
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+                border: 2px solid #0078d4;
+            }
+            
+            QComboBox::drop-down {
+                border: none;
+                border-radius: 0px;
+            }
+            
+            QCheckBox {
+                spacing: 8px;
+            }
+            
+            QTabWidget::pane {
+                border: 1px solid #d0d0d0;
+                border-radius: 8px;
+            }
+            
+            QTabBar::tab {
+                border-radius: 8px 8px 0 0;
+                padding: 6px 12px;
+            }
+
         """
 
 class ThemeManager:
@@ -3535,6 +3566,7 @@ class LoanApp(QMainWindow):
     def open_ai_assistant(self):
         """Opens the AI assistant dialog"""
         dialog = ChatAssistantDialog(self)
+        dialog.db_manager = self.db_manager  # This is the db_manager from login
         dialog.exec_()
 
     def open_reports(self):
@@ -4107,11 +4139,12 @@ class  ChatAssistantDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("LoanManager AI Assistant")
         self.loan_app = loan_app
+        self.db_manager = loan_app.db_manager
         # Aggiungi l'icona della finestra
         self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
         # Costruiamo il percorso assoluto al file degli intent
         intents_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'intents.json')
-        self.chatbot = Chatbot(intents_file)
+        self.chatbot = Chatbot("intents.json", db_manager=self.db_manager)
         # Sostituisci la conferma operatore con una versione GUI
         self.chatbot.operator_confirmation = lambda prompt: self.gui_operator_confirmation(prompt)
         self.main_layout = QVBoxLayout(self)
@@ -4308,6 +4341,51 @@ class  ChatAssistantDialog(QDialog):
         # Usa QTimer.singleShot per gestire la risposta in modo asincrono
         QTimer.singleShot(0, lambda: self.process_message(user_message))
 
+
+    def start_crm_conversation(self, intent_type):
+        """Avvia una conversazione CRM basata sul tipo di intent"""
+        self.current_conversation_state = f"crm_{intent_type}"
+        self.conversation_data = {"intent": intent_type}
+        
+        # Imposta il messaggio iniziale in base al tipo di intent
+        if intent_type == "add_client":
+            self.append_message("Assistant", "Let's add a new client. What's the client's first name?")
+        elif intent_type == "update_client":
+            self.append_message("Assistant", "Please enter the ID of the client you want to update:")
+        elif intent_type == "delete_client":
+            self.append_message("Assistant", "Please enter the ID of the client you want to delete:")
+        elif intent_type == "get_client":
+            self.append_message("Assistant", "Please enter the ID of the client you want to view:")
+        elif intent_type == "assign_loan_to_client":
+            self.append_message("Assistant", "Please enter the ID of the client you want to assign a loan to:")
+        elif intent_type == "record_client_interaction":
+            self.append_message("Assistant", "Please enter the ID of the client you want to record an interaction for:")
+        elif intent_type == "get_client_interactions":
+            self.append_message("Assistant", "Please enter the ID of the client to view their interactions:")
+        elif intent_type == "get_client_loans":
+            self.append_message("Assistant", "Please enter the ID of the client to view their loans:")
+        elif intent_type == "get_client_details":
+            self.append_message("Assistant", "Please enter the ID of the client to view their complete profile:")
+        elif intent_type == "add_corporation":
+            self.append_message("Assistant", "Let's add a new corporation. What's the company name?")
+        elif intent_type == "update_corporation":
+            self.append_message("Assistant", "Please enter the ID of the corporation you want to update:")
+        elif intent_type == "delete_corporation":
+            self.append_message("Assistant", "Please enter the ID of the corporation you want to delete:")
+        elif intent_type == "get_corporation":
+            self.append_message("Assistant", "Please enter the ID of the corporation you want to view:")
+        elif intent_type == "assign_loan_to_corporation":
+            self.append_message("Assistant", "Please enter the ID of the corporation you want to assign a loan to:")
+        elif intent_type == "record_corporation_interaction":
+            self.append_message("Assistant", "Please enter the ID of the corporation you want to record an interaction for:")
+        elif intent_type == "get_corporation_interactions":
+            self.append_message("Assistant", "Please enter the ID of the corporation to view their interactions:")
+        elif intent_type == "get_corporation_loans":
+            self.append_message("Assistant", "Please enter the ID of the corporation to view their loans:")
+        elif intent_type == "get_corporation_details":
+            self.append_message("Assistant", "Please enter the ID of the corporation to view their complete profile:")
+
+
     def process_message(self, user_message):
         """Processa il messaggio in modo asincrono"""
         try:
@@ -4321,6 +4399,8 @@ class  ChatAssistantDialog(QDialog):
                     self.handle_pricing_conversation(user_message)
                 elif self.current_conversation_state.startswith("payment"):
                     self.handle_payment_conversation(user_message)
+                elif self.current_conversation_state.startswith("crm_"):
+                    self.handle_crm_conversation(user_message)
                 return
 
             # Altrimenti procediamo con il normale flusso di intent
@@ -4388,7 +4468,7 @@ class  ChatAssistantDialog(QDialog):
 
     def handle_standard_intent(self, intent):
         """Gestisce gli intent standard che non richiedono dialoghi"""
-        intent_actions = {
+        base_intent_actions = {
             "greeting": lambda: self.append_message("Assistant", 
                                     np.random.choice([
                                         "Hi! How can I help you with your loans?",
@@ -4407,6 +4487,37 @@ class  ChatAssistantDialog(QDialog):
             "compare_loans": lambda: self._handle_compare_loans(),
             "plot_graph": lambda: self._handle_plot()
         }
+
+        # Aggiunta Intent CRM per clienti
+        client_intent_actions = {
+            "add_client": lambda: self.start_crm_conversation("add_client"),
+            "update_client": lambda: self.start_crm_conversation("update_client"),
+            "delete_client": lambda: self.start_crm_conversation("delete_client"),
+            "get_client": lambda: self.start_crm_conversation("get_client"),
+            "list_clients": lambda: self._handle_list_clients(),
+            "assign_loan_to_client": lambda: self.start_crm_conversation("assign_loan_to_client"),
+            "record_client_interaction": lambda: self.start_crm_conversation("record_client_interaction"),
+            "get_client_interactions": lambda: self.start_crm_conversation("get_client_interactions"),
+            "get_client_loans": lambda: self.start_crm_conversation("get_client_loans"),
+            "get_client_details": lambda: self.start_crm_conversation("get_client_details")
+        }
+        
+        # Aggiunta Intent CRM per aziende
+        corporation_intent_actions = {
+            "add_corporation": lambda: self.start_crm_conversation("add_corporation"),
+            "update_corporation": lambda: self.start_crm_conversation("update_corporation"),
+            "delete_corporation": lambda: self.start_crm_conversation("delete_corporation"),
+            "get_corporation": lambda: self.start_crm_conversation("get_corporation"),
+            "list_corporations": lambda: self._handle_list_corporations(),
+            "assign_loan_to_corporation": lambda: self.start_crm_conversation("assign_loan_to_corporation"),
+            "record_corporation_interaction": lambda: self.start_crm_conversation("record_corporation_interaction"),
+            "get_corporation_interactions": lambda: self.start_crm_conversation("get_corporation_interactions"),
+            "get_corporation_loans": lambda: self.start_crm_conversation("get_corporation_loans"),
+            "get_corporation_details": lambda: self.start_crm_conversation("get_corporation_details")
+        }
+
+        # Combina tutti gli intent
+        intent_actions = {**base_intent_actions, **client_intent_actions, **corporation_intent_actions}
 
         if intent in intent_actions:
             intent_actions[intent]()
@@ -5012,6 +5123,412 @@ class  ChatAssistantDialog(QDialog):
         except ValueError as e:
             self.append_message("Assistant", f"Invalid input: {str(e)}. Please try again.")
 
+    def handle_crm_conversation(self, user_input):
+        """Gestisce i flussi di conversazione per le funzionalità CRM"""
+        intent = self.conversation_data.get("intent", "")
+        
+        # Gestione Client
+        if intent == "add_client":
+            self._handle_add_client_conversation(user_input)
+        elif intent == "update_client":
+            self._handle_update_client_conversation(user_input)
+        elif intent == "delete_client":
+            self._handle_delete_client_conversation(user_input)
+        elif intent == "get_client":
+            self._handle_get_client_conversation(user_input)
+        elif intent == "assign_loan_to_client":
+            self._handle_assign_loan_to_client_conversation(user_input)
+        elif intent == "record_client_interaction":
+            self._handle_record_client_interaction_conversation(user_input)
+        elif intent == "get_client_interactions":
+            self._handle_get_client_interactions_conversation(user_input)
+        elif intent == "get_client_loans":
+            self._handle_get_client_loans_conversation(user_input)
+        elif intent == "get_client_details":
+            self._handle_get_client_details_conversation(user_input)
+        
+        # Gestione Corporation
+        elif intent == "add_corporation":
+            self._handle_add_corporation_conversation(user_input)
+        elif intent == "update_corporation":
+            self._handle_update_corporation_conversation(user_input)
+        elif intent == "delete_corporation":
+            self._handle_delete_corporation_conversation(user_input)
+        elif intent == "get_corporation":
+            self._handle_get_corporation_conversation(user_input)
+        elif intent == "assign_loan_to_corporation":
+            self._handle_assign_loan_to_corporation_conversation(user_input)
+        elif intent == "record_corporation_interaction":
+            self._handle_record_corporation_interaction_conversation(user_input)
+        elif intent == "get_corporation_interactions":
+            self._handle_get_corporation_interactions_conversation(user_input)
+        elif intent == "get_corporation_loans":
+            self._handle_get_corporation_loans_conversation(user_input)
+        elif intent == "get_corporation_details":
+            self._handle_get_corporation_details_conversation(user_input)
+
+    def _handle_list_clients(self):
+        """Gestisce la visualizzazione dell'elenco dei clienti"""
+        try:
+            clients = self.chatbot.crm.list_clients()
+            
+            if not clients or len(clients) == 0:
+                self.append_message("Assistant", "No clients found in the system.")
+                return
+                
+            # Crea un messaggio formattato con l'elenco dei clienti
+            clients_list = "Clients in the system:\n\n"
+            for i, client in enumerate(clients, 1):
+                clients_list += (f"{i}. ID: {client.get('client_id')}\n"
+                            f"Name: {client.get('first_name')} {client.get('last_name')}\n"
+                            f"Email: {client.get('email')}\n"
+                            f"Phone: {client.get('phone', 'N/A')}\n"
+                            f"{'─' * 30}\n")
+                
+            self.append_message("Assistant", clients_list)
+            
+        except Exception as e:
+            self.append_message("Assistant", f"Error retrieving clients: {str(e)}")
+
+    def _handle_list_corporations(self):
+        """Gestisce la visualizzazione dell'elenco delle aziende"""
+        try:
+            corporations = self.chatbot.crm.list_corporations()
+            
+            if not corporations or len(corporations) == 0:
+                self.append_message("Assistant", "No corporations found in the system.")
+                return
+                
+            # Crea un messaggio formattato con l'elenco delle aziende
+            corporations_list = "Corporations in the system:\n\n"
+            for i, corporation in enumerate(corporations, 1):
+                corporations_list += (f"{i}. ID: {corporation.get('corporation_id')}\n"
+                                f"Name: {corporation.get('company_name')}\n"
+                                f"Industry: {corporation.get('industry', 'N/A')}\n"
+                                f"Contact: {corporation.get('email')}\n"
+                                f"{'─' * 30}\n")
+                
+            self.append_message("Assistant", corporations_list)
+            
+        except Exception as e:
+            self.append_message("Assistant", f"Error retrieving corporations: {str(e)}")
+
+    # IMPLEMENTAZIONE CONVERSAZIONI CLIENT
+
+    def _handle_add_client_conversation(self, user_input):
+        """Gestisce il flusso di conversazione per l'aggiunta di un cliente"""
+        # Gestione dello stato della conversazione per la raccolta dei dati del cliente
+        if "step" not in self.conversation_data:
+            self.conversation_data["step"] = "first_name"
+            self.conversation_data["client_data"] = {}
+            
+        step = self.conversation_data["step"]
+        client_data = self.conversation_data["client_data"]
+        
+        # Processa l'input dell'utente in base allo step corrente
+        if step == "first_name":
+            client_data["first_name"] = user_input
+            self.conversation_data["step"] = "last_name"
+            self.append_message("Assistant", "What's the client's last name?")
+            
+        elif step == "last_name":
+            client_data["last_name"] = user_input
+            self.conversation_data["step"] = "email"
+            self.append_message("Assistant", "What's their email address?")
+            
+        elif step == "email":
+            client_data["email"] = user_input
+            self.conversation_data["step"] = "phone"
+            self.append_message("Assistant", "What's their phone number?")
+            
+        elif step == "phone":
+            client_data["phone"] = user_input
+            self.conversation_data["step"] = "birth_date"
+            self.append_message("Assistant", "What's their birth date? (YYYY-MM-DD, or type 'skip' to leave empty)")
+            
+        elif step == "birth_date":
+            if user_input.lower() != "skip":
+                client_data["birth_date"] = user_input
+            self.conversation_data["step"] = "address"
+            self.append_message("Assistant", "What's their address? (or type 'skip' to leave empty)")
+            
+        elif step == "address":
+            if user_input.lower() != "skip":
+                client_data["address"] = user_input
+            self.conversation_data["step"] = "city"
+            self.append_message("Assistant", "What city do they live in? (or type 'skip' to leave empty)")
+            
+        elif step == "city":
+            if user_input.lower() != "skip":
+                client_data["city"] = user_input
+            self.conversation_data["step"] = "state"
+            self.append_message("Assistant", "What state/province? (or type 'skip' to leave empty)")
+            
+        elif step == "state":
+            if user_input.lower() != "skip":
+                client_data["state"] = user_input
+            self.conversation_data["step"] = "zip_code"
+            self.append_message("Assistant", "What's the ZIP/postal code? (or type 'skip' to leave empty)")
+            
+        elif step == "zip_code":
+            if user_input.lower() != "skip":
+                client_data["zip_code"] = user_input
+            self.conversation_data["step"] = "country"
+            self.append_message("Assistant", "What country do they live in? (or type 'skip' to leave empty)")
+            
+        elif step == "country":
+            if user_input.lower() != "skip":
+                client_data["country"] = user_input
+            self.conversation_data["step"] = "occupation"
+            self.append_message("Assistant", "What's their occupation? (or type 'skip' to leave empty)")
+            
+        elif step == "occupation":
+            if user_input.lower() != "skip":
+                client_data["occupation"] = user_input
+            self.conversation_data["step"] = "employer"
+            self.append_message("Assistant", "Who is their employer? (or type 'skip' to leave empty)")
+            
+        elif step == "employer":
+            if user_input.lower() != "skip":
+                client_data["employer"] = user_input
+            self.conversation_data["step"] = "income"
+            self.append_message("Assistant", "What's their annual income? (numeric value, or type 'skip' to leave empty)")
+            
+        elif step == "income":
+            if user_input.lower() != "skip":
+                try:
+                    client_data["income"] = float(user_input)
+                except ValueError:
+                    self.append_message("Assistant", "Please enter a valid numeric value for income, or type 'skip' to leave empty.")
+                    return
+            self.conversation_data["step"] = "credit_score"
+            self.append_message("Assistant", "What's their credit score? (numeric value, or type 'skip' to leave empty)")
+            
+        elif step == "credit_score":
+            if user_input.lower() != "skip":
+                try:
+                    client_data["credit_score"] = int(user_input)
+                except ValueError:
+                    self.append_message("Assistant", "Please enter a valid numeric value for credit score, or type 'skip' to leave empty.")
+                    return
+            self.conversation_data["step"] = "confirmation"
+            
+            # Mostra riepilogo per conferma
+            summary = "Client Information Summary:\n\n"
+            for key, value in client_data.items():
+                summary += f"{key.replace('_', ' ').title()}: {value}\n"
+                
+            self.append_message("Assistant", 
+                f"{summary}\n\nDo you want to save this client? (yes/no)")
+            
+        elif step == "confirmation":
+            if user_input.lower() in ["yes", "y"]:
+                try:
+                    # Salva il cliente
+                    client_id = self.chatbot.crm.add_client(client_data)
+                    self.append_message("Assistant", f"Client added successfully! Client ID: {client_id}")
+                except Exception as e:
+                    self.append_message("Assistant", f"Error adding client: {str(e)}")
+            else:
+                self.append_message("Assistant", "Client creation cancelled.")
+                
+            # Reset dello stato di conversazione
+            self.current_conversation_state = None
+            self.conversation_data = {}
+
+    def _handle_update_client_conversation(self, user_input):
+        """Gestisce il flusso di conversazione per l'aggiornamento di un cliente"""
+        if "step" not in self.conversation_data:
+            self.conversation_data["step"] = "client_id"
+            self.conversation_data["updated_data"] = {}
+            
+        step = self.conversation_data["step"]
+        
+        if step == "client_id":
+            # Cerca il cliente con l'ID fornito
+            try:
+                client_id = user_input.strip()
+                client = self.chatbot.crm.get_client(client_id)
+                
+                if not client:
+                    self.append_message("Assistant", "Client not found. Please check the ID and try again.")
+                    self.current_conversation_state = None
+                    self.conversation_data = {}
+                    return
+                    
+                self.conversation_data["client_id"] = client_id
+                self.conversation_data["client"] = client
+                self.conversation_data["step"] = "field_selection"
+                
+                # Mostra i campi disponibili per la modifica
+                self.append_message("Assistant", 
+                    "What field would you like to update? Choose from:\n" +
+                    "1. First Name\n" +
+                    "2. Last Name\n" +
+                    "3. Email\n" +
+                    "4. Phone\n" +
+                    "5. Address\n" +
+                    "6. Occupation\n" +
+                    "7. Employer\n" +
+                    "8. Income\n" +
+                    "9. Credit Score\n" +
+                    "Or type 'done' to finish updating."
+                )
+            except Exception as e:
+                self.append_message("Assistant", f"Error retrieving client: {str(e)}")
+                self.current_conversation_state = None
+                self.conversation_data = {}
+                
+        elif step == "field_selection":
+            if user_input.lower() == "done":
+                # Termina l'aggiornamento e salva le modifiche
+                if not self.conversation_data["updated_data"]:
+                    self.append_message("Assistant", "No changes were made to the client.")
+                    self.current_conversation_state = None
+                    self.conversation_data = {}
+                    return
+                    
+                # Chiedi conferma
+                summary = "You are about to update the following fields:\n\n"
+                for key, value in self.conversation_data["updated_data"].items():
+                    summary += f"{key.replace('_', ' ').title()}: {value}\n"
+                    
+                self.conversation_data["step"] = "confirmation"
+                self.append_message("Assistant", f"{summary}\n\nDo you want to save these changes? (yes/no)")
+                return
+                
+            # Mappa la selezione al campo corrispondente
+            field_map = {
+                "1": "first_name",
+                "2": "last_name",
+                "3": "email",
+                "4": "phone",
+                "5": "address",
+                "6": "occupation",
+                "7": "employer",
+                "8": "income",
+                "9": "credit_score"
+            }
+            
+            if user_input not in field_map:
+                self.append_message("Assistant", "Invalid selection. Please choose a number from 1-9 or type 'done'.")
+                return
+                
+            self.conversation_data["current_field"] = field_map[user_input]
+            self.conversation_data["step"] = "field_value"
+            
+            current_value = self.conversation_data["client"].get(field_map[user_input], "N/A")
+            self.append_message("Assistant", f"Current value is: {current_value}\nEnter new value:")
+            
+        elif step == "field_value":
+            current_field = self.conversation_data["current_field"]
+            
+            # Per i campi numerici, valida l'input
+            if current_field == "income":
+                try:
+                    self.conversation_data["updated_data"][current_field] = float(user_input)
+                except ValueError:
+                    self.append_message("Assistant", "Please enter a valid numeric value for income.")
+                    return
+            elif current_field == "credit_score":
+                try:
+                    self.conversation_data["updated_data"][current_field] = int(user_input)
+                except ValueError:
+                    self.append_message("Assistant", "Please enter a valid numeric value for credit score.")
+                    return
+            else:
+                self.conversation_data["updated_data"][current_field] = user_input
+                
+            self.conversation_data["step"] = "field_selection"
+            self.append_message("Assistant", 
+                f"Updated {current_field.replace('_', ' ').title()} to: {user_input}\n\n" +
+                "What other field would you like to update? Choose from:\n" +
+                "1. First Name\n" +
+                "2. Last Name\n" +
+                "3. Email\n" +
+                "4. Phone\n" +
+                "5. Address\n" +
+                "6. Occupation\n" +
+                "7. Employer\n" +
+                "8. Income\n" +
+                "9. Credit Score\n" +
+                "Or type 'done' to finish updating."
+            )
+            
+        elif step == "confirmation":
+            if user_input.lower() in ["yes", "y"]:
+                try:
+                    # Aggiorna il cliente
+                    client_id = self.conversation_data["client_id"]
+                    updated_data = self.conversation_data["updated_data"]
+                    
+                    self.chatbot.crm.update_client(client_id, updated_data)
+                    self.append_message("Assistant", "Client updated successfully!")
+                except Exception as e:
+                    self.append_message("Assistant", f"Error updating client: {str(e)}")
+            else:
+                self.append_message("Assistant", "Client update cancelled.")
+                
+            # Reset dello stato di conversazione
+            self.current_conversation_state = None
+            self.conversation_data = {}
+
+    # Implementazione degli altri metodi di gestione delle conversazioni CRM
+    # (per brevità mostro solo questi due esempi dettagliati)
+
+    def _handle_delete_client_conversation(self, user_input):
+        """Gestisce l'eliminazione di un cliente"""
+        try:
+            client_id = user_input.strip()
+            client = self.chatbot.crm.get_client(client_id)
+            
+            if not client:
+                self.append_message("Assistant", "Client not found. Please check the ID and try again.")
+            else:
+                # Chiedi conferma
+                confirmation = QMessageBox.question(
+                    self, 
+                    "Confirm Deletion",
+                    f"Are you sure you want to delete client {client.get('first_name')} {client.get('last_name')}?\n"
+                    "This will also delete all interactions and loan associations.",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                
+                if confirmation == QMessageBox.Yes:
+                    self.chatbot.crm.delete_client(client_id)
+                    self.append_message("Assistant", "Client deleted successfully.")
+                else:
+                    self.append_message("Assistant", "Client deletion cancelled.")
+        except Exception as e:
+            self.append_message("Assistant", f"Error deleting client: {str(e)}")
+        finally:
+            # Reset dello stato di conversazione
+            self.current_conversation_state = None
+            self.conversation_data = {}
+
+    def _handle_get_client_conversation(self, user_input):
+        """Visualizza i dettagli di un cliente specifico"""
+        try:
+            client_id = user_input.strip()
+            client = self.chatbot.crm.get_client(client_id)
+            
+            if not client:
+                self.append_message("Assistant", "Client not found. Please check the ID and try again.")
+            else:
+                # Formatta i dettagli del cliente
+                details = "Client Details:\n\n"
+                for key, value in client.items():
+                    if key != "documents":  # Escludiamo i documenti per semplicità
+                        details += f"{key.replace('_', ' ').title()}: {value}\n"
+                        
+                self.append_message("Assistant", details)
+        except Exception as e:
+            self.append_message("Assistant", f"Error retrieving client details: {str(e)}")
+        finally:
+            # Reset dello stato di conversazione
+            self.current_conversation_state = None
+            self.conversation_data = {}
+
     def _handle_backend_action(self, action):
         """Esegue l'azione del backend"""
         try:
@@ -5183,8 +5700,8 @@ class ReportsDialog(FluentDialog):
     """Dialog for accessing various loan reporting features."""
     def __init__(self, db_manager, loan_crm, loans, parent=None):
         super().__init__("Loan Reports", parent)
-        self.setMinimumWidth(800)
-        self.setMinimumHeight(600)
+        self.setMinimumWidth(900)
+        self.setMinimumHeight(700)
         
         self.db_manager = db_manager
         self.loan_crm = loan_crm
