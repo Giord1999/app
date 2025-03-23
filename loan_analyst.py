@@ -268,7 +268,7 @@ class Loan:
         self.downpayment_percent = downpayment_percent
         self.downpayment = self.loan_amount * (self.downpayment_percent / 100)
         self.loan_amount -= self.downpayment
-        self.start = dt.datetime.fromisoformat(start).replace(day=1)
+        self.start = dt.datetime.fromisoformat(start)
         self.frequency = frequency
         self.rate_type = rate_type
         self.use_euribor = use_euribor
@@ -356,13 +356,25 @@ class Loan:
         except Exception as e:
             print(f"Error deleting loan: {str(e)}")
             return False
-    
+        
     def update_db(self):
         """Aggiorna i dati del prestito nel database."""
+        if self.db_manager is None:
+            # Attempt to get a db_manager from the main application
+            # This is a fallback mechanism
+            from loan_app import app_instance
+            if hasattr(app_instance, 'db_manager'):
+                self.db_manager = app_instance.db_manager
+                print("Recovered db_manager from application instance")
+                
         if self.db_manager:
-            self.db_manager.update_loan(self)
+            try:
+                self.db_manager.update_loan(self)
+            except Exception as e:
+                print(f"Database update error: {str(e)}")
+                # You may want to show a message box here
         else:
-            print("Errore: Nessun database manager associato a Loan!")
+            print("Error: No database manager associated with Loan!")
 
 
 
