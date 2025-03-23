@@ -55,6 +55,9 @@ class LoanReport:
 
     def load_all_loans(self):
         """Carica tutti i prestiti dal database e li restituisce come lista di oggetti Loan."""
+        # Pulisce esplicitamente la lista prima di caricare i prestiti
+        Loan.clear_loans()
+        
         success = Loan.load_all_loans(self.db_manager)
         if not success:
             raise Exception("Errore nel caricamento dei prestiti dal database.")
@@ -63,40 +66,75 @@ class LoanReport:
     def generate_portfolio_summary(self):
         """
         Genera un report di sintesi del portafoglio di prestiti.
-        
-        Restituisce un dizionario contenente:
-         - Numero totale di prestiti
-         - Importo totale erogato
-         - Media del tasso iniziale
-         - Media del TAEG (periodico e annualizzato)
-         - Interesse totale cumulato previsto
         """
-        loans = self.load_all_loans()
-        if not loans:
-            return "Nessun prestito trovato."
+        # SOLUZIONE RADICALE: Ignora completamente Loan.loans e lavora direttamente con il DB
+        try:
+            # Carica i dati direttamente dal database senza usare Loan.loans
+            loans_data = self.db_manager.load_all_loans_from_db()
             
-        total_loans = len(loans)
-        total_amount = sum(loan.loan_amount for loan in loans)
-        avg_initial_rate = np.mean([loan.initial_rate for loan in loans])
-        
-        # Assicura che il TAEG sia calcolato per ogni prestito
-        for loan in loans:
-            if not loan.taeg:
+            if not loans_data:
+                return "Nessun prestito trovato."
+            
+            total_loans = len(loans_data)
+            total_amount = sum(float(loan[3]) for loan in loans_data)  # loan_amount è nella posizione 3
+            avg_initial_rate = np.mean([float(loan[1]) for loan in loans_data])  # rate è nella posizione 1
+            
+            # Per TAEG e interesse totale, dovrai caricare individualmente ogni prestito
+            # ma NON aggiungerli alla lista statica Loan.loans
+            taeg_values_periodic = []
+            taeg_values_annualized = []
+            total_interest = 0
+            
+            for loan_data in loans_data:
+                loan_id = str(loan_data[0])
+                loan = Loan(
+                    db_manager=self.db_manager,
+                    rate=float(loan_data[1]),
+                    term=int(loan_data[2]),
+                    loan_amount=float(loan_data[3]),
+                    amortization_type=loan_data[4],
+                    frequency=loan_data[5],
+                    rate_type=loan_data[6],
+                    use_euribor=loan_data[7],
+                    update_frequency=loan_data[8],
+                    downpayment_percent=float(loan_data[9]),
+                    start=loan_data[10].isoformat(),
+                    loan_id=loan_id,
+                    should_save=False
+                )
+                
+                # Carica i costi aggiuntivi e le spese periodiche
+                loan.additional_costs = self.db_manager.load_additional_costs(loan_id)
+                loan.periodic_expenses = self.db_manager.load_periodic_expenses(loan_id)
+                
+                # Calcola TAEG e tabella
+                loan.table = loan.loan_table()
                 loan.calculate_taeg()
-        avg_taeg_periodic = np.mean([loan.taeg.get('periodic', 0) for loan in loans])
-        avg_taeg_annualized = np.mean([loan.taeg.get('annualized', 0) for loan in loans])
-        total_interest = sum(loan.table["Interest"].cumsum().iloc[-1] for loan in loans)
+                
+                if hasattr(loan, 'taeg') and loan.taeg:
+                    taeg_values_periodic.append(loan.taeg.get('periodic', 0))
+                    taeg_values_annualized.append(loan.taeg.get('annualized', 0))
+                
+                total_interest += loan.table["Interest"].cumsum().iloc[-1]
+                
+                # NON aggiungere alla lista statica Loan.loans
+            
+            avg_taeg_periodic = np.mean(taeg_values_periodic) if taeg_values_periodic else 0
+            avg_taeg_annualized = np.mean(taeg_values_annualized) if taeg_values_annualized else 0
+            
+            summary = {
+                "Total Loans": total_loans,
+                "Total Loan Amount": total_amount,
+                "Average Initial Rate": avg_initial_rate,
+                "Average TAEG Periodic (%)": avg_taeg_periodic,
+                "Average TAEG Annualized (%)": avg_taeg_annualized,
+                "Total Interest to be Paid": total_interest
+            }
+            return summary
+        except Exception as e:
+            print(f"Errore nella generazione del report di portafoglio: {e}")
+            return "Errore nella generazione del report."
         
-        summary = {
-            "Total Loans": total_loans,
-            "Total Loan Amount": total_amount,
-            "Average Initial Rate": avg_initial_rate,
-            "Average TAEG Periodic (%)": avg_taeg_periodic,
-            "Average TAEG Annualized (%)": avg_taeg_annualized,
-            "Total Interest to be Paid": total_interest
-        }
-        return summary
-
     def generate_comparative_report(self, loans: list = None):
         """
         Genera un report comparativo tra prestiti.
@@ -381,12 +419,14 @@ class LoanReport:
         Esporta un report in formato PDF professionale.
         
         Parametri:
-          report_data: I dati del report (DataFrame, dizionario, ecc.)
-          report_type: Il tipo di report ('portfolio', 'comparative', 'amortization', ecc.)
-          filepath: Il percorso del file dove salvare il PDF
-          
+        report_data: I dati del report (DataFrame, dizionario, ecc.)
+        report_type: Il tipo di report ('portfolio', 'comparative', 'amortization', ecc.)
+        filepath: Il percorso del file dove salvare il PDF
+        
         Restituisce il percorso assoluto del file esportato.
         """
+        # IMPORTANTE: Non ricaricare mai i prestiti in questa funzione o nei metodi chiamati
+        
         # Inizializziamo il documento PDF
         doc = SimpleDocTemplate(
             filepath,
@@ -420,7 +460,6 @@ class LoanReport:
             alignment=1,
             spaceAfter=10
         ))
-
         
         # Aggiungi intestazione
         current_date = dt.datetime.now().strftime("%d/%m/%Y")
@@ -436,7 +475,7 @@ class LoanReport:
         except Exception:
             pass  # Se non c'è logo, procedi senza
         
-        # In base al tipo di report, formatta i dati in modo appropriato
+        # In base al tipo di report, formatta i dati in modo appropriato (SOLO con i dati passati)
         if report_type == "portfolio":
             self._format_portfolio_pdf(elements, report_data, styles)
         elif report_type == "comparative":
@@ -461,7 +500,7 @@ class LoanReport:
         # Costruisci il documento
         doc.build(elements)
         return os.path.abspath(filepath)
-    
+        
     def _format_portfolio_pdf(self, elements, data, styles):
         """Formatta un report di sintesi del portafoglio per PDF."""
         elements.append(Paragraph("REPORT DI SINTESI DEL PORTAFOGLIO PRESTITI", styles["Title"]))
@@ -475,10 +514,16 @@ class LoanReport:
         ))
         elements.append(Spacer(1, 12))
         
-        # Tabella dei KPI principali
+        # Tabella dei KPI principali - Usa DIRETTAMENTE i dati forniti senza ricaricare
         table_data = [["Metrica", "Valore"]]
         for key, value in data.items():
-            formatted_value = f"{value:,.2f}" if isinstance(value, (int, float)) else str(value)
+            if isinstance(value, float):
+                if "Rate" in key or "TAEG" in key:
+                    formatted_value = f"{value * 100:.2f}%" if key != "Average Initial Rate" else f"{value:.2f}%"
+                else:
+                    formatted_value = f"€{value:,.2f}"
+            else:
+                formatted_value = str(value)
             # Modifica le etichette per renderle più leggibili
             readable_key = key.replace("_", " ").title()
             table_data.append([readable_key, formatted_value])
@@ -496,7 +541,7 @@ class LoanReport:
         elements.append(table)
         elements.append(Spacer(1, 20))
         
-        # Aggiungi un grafico
+        # Aggiungi un grafico - Usa SOLO i dati passati, non ricaricare nulla
         # Creiamo un grafico a torta per la distribuzione del capitale
         if "Total Loan Amount" in data and "Total Interest to be Paid" in data:
             self._add_chart_to_pdf(elements, {
@@ -511,7 +556,7 @@ class LoanReport:
             styles["Normal"]
         ))
         
-        # Genera raccomandazioni dinamiche basate sui dati
+        # Genera raccomandazioni dinamiche basate sui dati FORNITI, non ricaricare
         recommendations = []
         if data.get("Average TAEG Annualized (%)", 0) > 5:
             recommendations.append("Valutare opportunità di rifinanziamento per i prestiti con TAEG elevato")
@@ -527,7 +572,7 @@ class LoanReport:
         # Aggiungi le raccomandazioni al documento
         for i, rec in enumerate(recommendations, 1):
             elements.append(Paragraph(f"{i}. {rec}", styles["Normal"]))
-    
+                
     def _format_comparative_pdf(self, elements, data, styles):
         """Formatta un report comparativo tra prestiti per PDF."""
         elements.append(Paragraph("REPORT COMPARATIVO TRA PRESTITI", styles["Title"]))
