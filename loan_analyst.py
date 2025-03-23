@@ -1269,7 +1269,7 @@ class Loan:
     @classmethod
     def clear_loans(cls):
         """Pulisce la lista dei prestiti in memoria"""
-        cls.loans.clear()
+        cls.loans = []
         
 
     @classmethod 
