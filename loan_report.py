@@ -1396,24 +1396,26 @@ class LoanReport:
             pie.labels = [str(k) for k in data.keys()]
             pie.slices.strokeWidth = 0.5
             
+
             # Assegna colori diversi alle fette
-            colors = [colors.blue, colors.green, colors.red, colors.yellow, 
-                      colors.orange, colors.purple, colors.pink, colors.brown]
+            color_list = [colors.blue, colors.green, colors.red, colors.yellow, 
+                    colors.orange, colors.purple, colors.pink, colors.brown]
             for i, _ in enumerate(data):
-                pie.slices[i].fillColor = colors[i % len(colors)]
+                pie.slices[i].fillColor = color_list[i % len(color_list)]
             
             drawing.add(pie)
-            
+
+
             # Aggiungi una legenda
-            drawing.add(Legend(),
-                pie.x + pie.width + 10,
-                pie.y,
-                pie.labels)
-            
-            elements.append(Paragraph(title, styles["Subtitle"]))
-            elements.append(drawing)
-            elements.append(Spacer(1, 10))
-            
+            legend = Legend()
+            legend.x = pie.x + pie.width + 10
+            legend.y = pie.y
+            legend.alignment = 'left'
+            legend.colorNamePairs = [(pie.slices[i].fillColor, label) for i, label in enumerate(pie.labels)]
+
+            # Add legend to drawing
+            drawing.add(legend)
+
         elif chart_type == "bar" and isinstance(data, dict):
             # Usa matplotlib per un grafico a barre più sofisticato
             buffer = io.BytesIO()
