@@ -112,8 +112,19 @@ class LoanReport:
                 loan.calculate_taeg()
                 
                 if hasattr(loan, 'taeg') and loan.taeg:
-                    taeg_values_periodic.append(loan.taeg.get('periodic', 0))
-                    taeg_values_annualized.append(loan.taeg.get('annualized', 0))
+                    # Assicurati che i valori siano nel formato corretto (decimale)
+                    periodic_value = loan.taeg.get('periodic', 0)
+                    annualized_value = loan.taeg.get('annualized', 0)
+                    
+                    # Normalizza i valori se sono percentuali superiori a 1
+                    if isinstance(periodic_value, (int, float)) and periodic_value > 1:
+                        periodic_value = periodic_value / 100
+                    if isinstance(annualized_value, (int, float)) and annualized_value > 1:
+                        annualized_value = annualized_value / 100
+                        
+                    # Ora aggiungi i valori normalizzati
+                    taeg_values_periodic.append(periodic_value)
+                    taeg_values_annualized.append(annualized_value)
                 
                 total_interest += loan.table["Interest"].cumsum().iloc[-1]
                 
