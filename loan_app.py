@@ -4,11 +4,11 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QCheckBox, QFileDialog, QGroupBox)
+                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QDateEdit, QCheckBox, QFileDialog, QGroupBox)
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen
-from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation
+from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate
 
 
 # Set the backend for matplotlib
@@ -738,6 +738,44 @@ class LoanDialog(FluentDialog):
         form.addRow("Payment Frequency:", self.frequency_combobox)
         
         self.main_layout.insertLayout(0, form)
+
+        self.start_date = QDateEdit()
+        self.start_date.setDate(QDate.currentDate())
+        self.start_date.setCalendarPopup(True)
+        self.start_date.setDisplayFormat("dd/MM/yyyy")
+        # Personalizza lo stile del calendario
+        self.start_date.setStyleSheet("""
+            QDateEdit {
+                border: 1px solid #e0e0e0;
+                border-radius: 12px;
+                padding: 6px 12px;
+            }
+            QCalendarWidget QToolButton {
+                height: 30px;
+                width: 100px;
+                color: white;
+                background-color: #0078D4;
+                border-radius: 2px;
+            }
+            QCalendarWidget QMenu {
+                width: 150px;
+                left: 20px;
+                color: white;
+                background-color: #0078D4;
+            }
+            QCalendarWidget QSpinBox {
+                width: 100px;
+                color: white;
+                background-color: #0078D4;
+                selection-background-color: #0078D4;
+                selection-color: white;
+            }
+            QCalendarWidget QTableView {
+                selection-background-color: #0078D4;
+                selection-color: white;
+            }
+        """)
+        form.addRow("Start Date:", self.start_date)
         
         # Additional costs button
         self.additional_costs_button = QPushButton("Add Additional Costs")
@@ -816,7 +854,8 @@ class LoanDialog(FluentDialog):
             "use_euribor": self.use_euribor_checkbox.isChecked(),
             "euribor_spread": self.euribor_spread_entry.value(),
             "additional_costs": self.additional_costs or {},
-            "periodic_expenses": self.periodic_expenses or {}
+            "periodic_expenses": self.periodic_expenses or {},
+            "start": self.start_date.date().toString("yyyy-MM-dd")  # Aggiungi questa riga
         }
     
 
@@ -3694,6 +3733,11 @@ class LoanApp(QMainWindow):
         if not self.selected_loan:
             QMessageBox.warning(self, "Error", "Please select a loan first")
             return
+
+        # Ensure the selected loan has a valid db_manager
+        if self.selected_loan.db_manager is None:
+            self.selected_loan.db_manager = self.db_manager
+            print(f"Repaired db_manager for loan {self.selected_loan.loan_id}")
 
         dialog = EditLoanDialog(self.selected_loan, self)
         if dialog.exec_() == QDialog.Accepted:
