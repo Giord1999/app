@@ -419,9 +419,92 @@ class LoanReport:
         except Exception as e:
             raise ValueError(f"Errore nel recupero dei dati Euribor: {e}")
         
-        # Ordina per data e calcola la media mobile
         euribor_data = euribor_data.sort_values("TIME_PERIOD")
-        euribor_data["Moving_Avg"] = euribor_data["OBS_VALUE"].rolling(window=12, min_periods=1).mean()
+        
+        try:
+            # Preparazione dati per Prophet
+            prophet_data = euribor_data[["TIME_PERIOD", "OBS_VALUE"]].rename(
+                columns={"TIME_PERIOD": "ds", "OBS_VALUE": "y"}
+            )
+            prophet_data["ds"] = pd.to_datetime(prophet_data["ds"])
+            
+            # Addestramento modello Prophet
+            from prophet import Prophet
+            import statsmodels.api as sm
+            from scipy import stats
+            from statsmodels.stats.diagnostic import acorr_ljungbox
+            
+            # Configura Prophet con parametri ottimizzati per serie finanziarie
+            model = Prophet(
+                changepoint_prior_scale=0.05,  # Controlla flessibilità del trend
+                seasonality_prior_scale=10,    # Enfatizza componenti stagionali
+                yearly_seasonality=True,
+                weekly_seasonality=False,
+                daily_seasonality=False
+            )
+            
+            # Aggiungi stagionalità trimestrale per catturare cicli finanziari
+            model.add_seasonality(name='quarterly', period=91.25, fourier_order=8)
+            
+            # Addestra il modello Prophet
+            model.fit(prophet_data)
+            
+            # Genera previsioni sui dati esistenti
+            prophet_forecast = model.predict(prophet_data)
+            
+            # Calcola i residui di Prophet
+            prophet_data['prophet_residuals'] = prophet_data['y'] - prophet_forecast['yhat']
+            
+            # Analizza i residui per determinare i parametri ARIMA ottimali
+            from pmdarima import auto_arima
+            
+            # Identifica automaticamente il miglior modello ARIMA per i residui
+            arima_model = auto_arima(
+                prophet_data['prophet_residuals'].values,
+                start_p=0, start_q=0,
+                max_p=5, max_q=5,
+                m=12,                # Periodicità stagionale (mensile)
+                seasonal=True,       # Include componente stagionale
+                d=None,              # Determina automaticamente differenziazione
+                D=None,              # Determina automaticamente differenziazione stagionale
+                trace=False,         # Non mostrare tutti i modelli testati
+                error_action='ignore',
+                suppress_warnings=True,
+                stepwise=True,       # Approccio graduale per velocizzare
+                information_criterion='aic'  # Criterio per selezionare modello
+            )
+            
+            # Addestriamo ARIMA sui residui
+            arima_model_fit = arima_model.fit(prophet_data['prophet_residuals'].values)
+            
+            # Otteniamo previsioni ARIMA sui residui
+            arima_predictions = arima_model_fit.predict_in_sample()
+            
+            # Combiniamo previsioni Prophet con correzioni ARIMA
+            hybrid_predictions = prophet_forecast['yhat'].values + arima_predictions
+            
+            # Verifichiamo la normalità dei residui finali
+            final_residuals = prophet_data['y'].values - hybrid_predictions
+            _, pvalue_shapiro = stats.shapiro(final_residuals)
+            
+            # Verifichiamo l'autocorrelazione dei residui finali
+            ljungbox_result = acorr_ljungbox(final_residuals, lags=[12])
+            pvalue_ljungbox = ljungbox_result['lb_pvalue'].values[0]
+            
+            # Aggiungiamo i valori previsti al dataframe originale
+            euribor_data["Hybrid_Forecast"] = hybrid_predictions
+            
+            # Aggiungiamo diagnostica del modello
+            euribor_data["Model_Quality"] = f"Normalità residui: {'OK' if pvalue_shapiro > 0.05 else 'Non OK'}, " \
+                                            f"No autocorrelazione: {'OK' if pvalue_ljungbox > 0.05 else 'Non OK'}"
+            
+            # Manteniamo Moving_Avg per retrocompatibilità
+            euribor_data["Moving_Avg"] = euribor_data["Hybrid_Forecast"]
+            
+        except Exception as e:
+            # Fallback sulla media mobile in caso di errore
+            print(f"Errore nel modello avanzato: {str(e)}. Utilizzo della media mobile come fallback.")
+            euribor_data["Moving_Avg"] = euribor_data["OBS_VALUE"].rolling(window=12, min_periods=1).mean()
         
         return euribor_data
     
@@ -1203,7 +1286,7 @@ class LoanReport:
         
         for i, rec in enumerate(recommendations, 1):
             elements.append(Paragraph(f"{i}. {rec}", styles["Normal"]))
-    
+        
     def _format_forecast_pdf(self, elements, data, styles):
         """Formatta un report di previsione dell'Euribor per PDF."""
         elements.append(Paragraph("REPORT DI PREVISIONE DELL'EURIBOR", styles["Title"]))
@@ -1211,7 +1294,8 @@ class LoanReport:
         
         elements.append(Paragraph(
             "Questo report analizza l'andamento storico dei tassi Euribor e fornisce "
-            "una previsione basata su tecniche di analisi delle serie temporali.", 
+            "una previsione basata su un modello ibrido Prophet-ARIMA che combina "
+            "analisi di trend, stagionalità e correlazioni seriali.", 
             styles["Normal"]
         ))
         elements.append(Spacer(1, 12))
@@ -1251,6 +1335,16 @@ class LoanReport:
         elements.append(stats_table)
         elements.append(Spacer(1, 20))
         
+        # Mostra la qualità del modello se disponibile
+        if "Model_Quality" in data.columns:
+            model_quality = data["Model_Quality"].iloc[0] if not data["Model_Quality"].empty else "Non disponibile"
+            elements.append(Paragraph("Diagnostica del Modello", styles["Subtitle"]))
+            elements.append(Paragraph(
+                f"Qualità del modello: {model_quality}", 
+                styles["Normal"]
+            ))
+            elements.append(Spacer(1, 12))
+        
         # Grafico dell'andamento storico e della previsione
         elements.append(Paragraph("Andamento Storico e Previsione", styles["Subtitle"]))
         
@@ -1266,12 +1360,15 @@ class LoanReport:
         
         # Traccia i valori osservati
         plt.plot(data_sorted["TIME_PERIOD"], data_sorted["OBS_VALUE"], 
-                 label="Valori osservati", color="blue", linewidth=2)
+                label="Valori osservati", color="blue", linewidth=2)
         
-        # Traccia la media mobile (previsione)
-        if "Moving_Avg" in data_sorted.columns:
+        # Traccia la previsione del modello ibrido
+        if "Hybrid_Forecast" in data_sorted.columns:
+            plt.plot(data_sorted["TIME_PERIOD"], data_sorted["Hybrid_Forecast"], 
+                    label="Modello ibrido Prophet-ARIMA", color="red", linewidth=2, linestyle="--")
+        elif "Moving_Avg" in data_sorted.columns:
             plt.plot(data_sorted["TIME_PERIOD"], data_sorted["Moving_Avg"], 
-                     label="Media Mobile (previsione)", color="red", linewidth=2, linestyle="--")
+                    label="Modello (previsione)", color="red", linewidth=2, linestyle="--")
         
         plt.title("Andamento Euribor e Previsione")
         plt.xlabel("Periodo")
@@ -1299,14 +1396,15 @@ class LoanReport:
         # Mostra solo gli ultimi 6 mesi e le previsioni future
         recent_data = data_sorted.tail(6)
         
-        table_data = [["Periodo", "Valore Osservato", "Valore Previsto (Media Mobile)"]]
+        forecast_col = "Hybrid_Forecast" if "Hybrid_Forecast" in recent_data.columns else "Moving_Avg"
+        table_data = [["Periodo", "Valore Osservato", "Valore Previsto"]]
         
         for _, row in recent_data.iterrows():
             period = row["TIME_PERIOD"].strftime("%b %Y") if isinstance(row["TIME_PERIOD"], pd.Timestamp) else str(row["TIME_PERIOD"])
             obs_value = f"{row['OBS_VALUE']:.3f}%" if pd.notnull(row["OBS_VALUE"]) else "N/A"
-            mov_avg = f"{row['Moving_Avg']:.3f}%" if pd.notnull(row.get("Moving_Avg")) else "N/A"
+            forecast_value = f"{row[forecast_col]:.3f}%" if pd.notnull(row.get(forecast_col)) else "N/A"
             
-            table_data.append([period, obs_value, mov_avg])
+            table_data.append([period, obs_value, forecast_value])
         
         recent_table = Table(table_data)
         recent_table.setStyle(TableStyle([
@@ -1326,13 +1424,25 @@ class LoanReport:
         
         # Calcola la tendenza recente (ultimi 3 mesi)
         recent = data_sorted.tail(3)["OBS_VALUE"].values
+        forecast_recent = data_sorted.tail(3)[forecast_col].values if forecast_col in data_sorted.columns else []
+        
         if len(recent) >= 2:
             trend = recent[-1] - recent[0]
             trend_text = "in aumento" if trend > 0 else "in diminuzione" if trend < 0 else "stabile"
             
+            # Calcola la direzione prevista per i prossimi periodi
+            forecast_trend = ""
+            if len(forecast_recent) >= 2:
+                forecast_diff = forecast_recent[-1] - forecast_recent[0]
+                forecast_trend = (
+                    "Il modello prevede che questa tendenza continuerà nei prossimi periodi. " 
+                    if (forecast_diff > 0 and trend > 0) or (forecast_diff < 0 and trend < 0) else
+                    "Il modello prevede un'inversione di tendenza nei prossimi periodi. "
+                )
+            
             elements.append(Paragraph(
                 f"L'analisi mostra una tendenza {trend_text} dei tassi Euribor negli ultimi 3 mesi "
-                f"(variazione di {abs(trend):.3f}%). Questo andamento suggerisce che ",
+                f"(variazione di {abs(trend):.3f}%). {forecast_trend}",
                 styles["Normal"]
             ))
             
@@ -1361,7 +1471,7 @@ class LoanReport:
                 "Non sono disponibili dati sufficienti per analizzare la tendenza recente.",
                 styles["Normal"]
             ))
-    
+                
     def _add_chart_to_pdf(self, elements, data, title, chart_type="pie", styles=None):
         """
         Aggiunge un grafico al documento PDF.
