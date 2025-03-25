@@ -1109,41 +1109,20 @@ class Loan:
 
         return consolidated_loan
 
+
     def calculate_probabilistic_pricing(self, 
-                                    initial_default: float = 0.2,
-                                    default_decay: float = 0.9, 
-                                    final_default: float = 0.4,
-                                    recovery_rate: float = 0.4,
-                                    num_iterations: int = 100,
-                                    loan_lives: list = None,
-                                    interest_rates: np.ndarray = None,
-                                    default_probabilities: list = None) -> pd.DataFrame:
+                                        initial_default: float = 0.2,
+                                        default_decay: float = 0.9, 
+                                        final_default: float = 0.4,
+                                        recovery_rate: float = 0.4,
+                                        num_iterations: int = 100,
+                                        loan_lives: list = None,
+                                        interest_rates: np.ndarray = None,
+                                        default_probabilities: list = None) -> pd.DataFrame:
         """
         Calculate probabilistic loan pricing using Monte Carlo simulation.
-
-        Parameters
-        ----------
-        initial_default : float, optional
-            Initial default probability, default 0.2 (20%)
-        default_decay : float, optional
-            Default probability decay rate, default 0.9 (90%)
-        final_default : float, optional
-            Final default probability, default 0.4 (40%)
-        recovery_rate : float, optional
-            Recovery rate in case of default, default 0.4 (40%)
-        num_iterations : int, optional
-            Number of Monte Carlo iterations, default 100
-        loan_lives : list, optional
-            List of loan durations in years, default [5,10,20]
-        interest_rates : array-like, optional
-            Array of interest rates, default np.arange(0.3, 0.41, 0.05)
-        default_probabilities : list, optional
-            List of default probabilities, default [0.1, 0.2, 0.3]
-
-        Returns
-        -------
-        pd.DataFrame
-            Styled DataFrame with IRR calculations
+        
+        Optimized version that creates separate loan objects for each parameter combination.
         """
         # Input validation
         if loan_lives is None:
@@ -1163,9 +1142,6 @@ class Loan:
 
         results = []
         
-        # Convert amortization schedule DataFrame to cash flow list
-        unadjusted_cashflows = self.table['Payment'].tolist()
-        
         def calculate_default_probability(loan_life):
             default_probability_values = []
             current_default = initial_default
@@ -1184,19 +1160,19 @@ class Loan:
                     default_probability_values.append(recovery_rate)
             return default_probability_values
 
-        def calculate_adjusted_cashflow(default_probs, cashflows):
+        def calculate_adjusted_cashflow(default_probs, cashflows, loan_amount, period_rate):
             adjusted_flows = []
             
             for i, (default_prob, cf) in enumerate(zip(default_probs, cashflows)):
                 if i == 0: # First flow
-                    interest_portion = self.rate * self.loan_amount
+                    interest_portion = period_rate * loan_amount
                     adj_interest = interest_portion * (1 - default_prob)
-                    adjusted_flows.append(-self.loan_amount + adj_interest)
-                elif default_prob == recovery_rate and cf == self.loan_amount:
-                    adj_cf = (self.rate * self.loan_amount) * (1 - default_prob)
+                    adjusted_flows.append(-loan_amount + adj_interest)
+                elif default_prob == recovery_rate and cf == loan_amount:
+                    adj_cf = (period_rate * loan_amount) * (1 - default_prob)
                     adjusted_flows.append(adj_cf)
                 elif default_prob == recovery_rate:
-                    adjusted_flows.append(recovery_rate * self.loan_amount)
+                    adjusted_flows.append(recovery_rate * loan_amount)
                 elif default_prob == 0 and cf == 0:
                     adjusted_flows.append(0)
                 else:
@@ -1215,11 +1191,31 @@ class Loan:
                 for default_prob in default_probabilities:
                     for life in loan_lives:
                         try:
-                            # Calculate default probabilities
+                            # Create a lightweight loan object for this specific parameter set
+                            # No DB connection, no saving, just calculation
+                            temp_loan = Loan(
+                                db_manager=None,  # No DB operations
+                                rate=rate,
+                                term=life,
+                                loan_amount=self.loan_amount,
+                                amortization_type=self.amortization_type,
+                                frequency=self.frequency,
+                                should_save=False  # Don't save to database
+                            )
+                            
+                            # Get the cash flows for this specific loan
+                            unadjusted_cashflows = temp_loan.table['Payment'].tolist()
+                            
+                            # Calculate default probabilities for this loan life
                             probs = calculate_default_probability(life)
                             
                             # Calculate adjusted cash flows
-                            adj_flows = calculate_adjusted_cashflow(probs, unadjusted_cashflows)
+                            adj_flows = calculate_adjusted_cashflow(
+                                probs, 
+                                unadjusted_cashflows, 
+                                temp_loan.loan_amount, 
+                                temp_loan.rate
+                            )
                             
                             # Calculate IRR
                             irr = npf.irr(adj_flows)
@@ -1263,8 +1259,6 @@ class Loan:
         styled = styled.format("{:.2%}")
         
         return styled
-
-
 
     @classmethod
     def clear_loans(cls):
