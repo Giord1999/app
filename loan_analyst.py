@@ -12,6 +12,10 @@ from scipy.optimize import brentq
 import random
 from ecbdata import ecbdata
 from datetime import datetime 
+import numba as nb
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import os
 
 
 
@@ -256,6 +260,91 @@ class DbManager:
         cursor = self.execute_db_query(query, (loan_id,))
         return {row[0]: row[1] for row in cursor.fetchall()}
 
+
+# JIT-compiled function for calculating default probability
+@nb.jit(nopython=True)
+def _calculate_default_probability(loan_life, initial_default, default_decay, final_default, recovery_rate):
+    # Pre-allocate array with sufficient size
+    default_probability_values = np.zeros(loan_life + 2)
+    current_default = initial_default
+    idx = 0
+    
+    # Match original logic exactly
+    for i in range(1, loan_life + 3):
+        if i == 1:
+            default_probability_values[idx] = current_default
+            idx += 1
+        elif i < loan_life:
+            current_default *= default_decay
+            default_probability_values[idx] = current_default
+            idx += 1
+        elif i == loan_life:
+            default_probability_values[idx] = final_default
+            idx += 1
+        elif i == loan_life + 1:
+            default_probability_values[idx] = 0
+            idx += 1
+        else:  # i == loan_life + 2
+            default_probability_values[idx] = recovery_rate
+            idx += 1
+    
+    return default_probability_values[:idx]  # Return only the filled portion
+
+# JIT-compiled function for calculating adjusted cashflow
+@nb.jit(nopython=True)
+def _calculate_adjusted_cashflow(default_probs, cashflows, loan_amount, period_rate, recovery_rate):
+    n = len(default_probs)
+    adjusted_flows = np.zeros(n)
+    
+    for i in range(n):
+        default_prob = default_probs[i]
+        cf = cashflows[i] if i < len(cashflows) else 0.0
+        
+        if i == 0:  # First flow
+            interest_portion = period_rate * loan_amount
+            adj_interest = interest_portion * (1.0 - default_prob)
+            adjusted_flows[i] = -loan_amount + adj_interest
+        elif abs(default_prob - recovery_rate) < 1e-10 and abs(cf - loan_amount) < 1e-10:
+            adj_cf = (period_rate * loan_amount) * (1.0 - default_prob)
+            adjusted_flows[i] = adj_cf
+        elif abs(default_prob - recovery_rate) < 1e-10:
+            adjusted_flows[i] = recovery_rate * loan_amount
+        elif abs(default_prob) < 1e-10 and abs(cf) < 1e-10:
+            adjusted_flows[i] = 0.0
+        else:
+            adjusted_flows[i] = cf * (1.0 - default_prob)
+    
+    return adjusted_flows
+
+# JIT-compiled function to generate multiple payment streams efficiently
+@nb.jit(nopython=True)
+def _generate_payment_streams(loan_amount, rates, terms, amortization_type, periods_per_year):
+    """Generate payment streams for all combinations of rates and terms"""
+    result = {}
+    
+    for rate in rates:
+        for term in terms:
+            periods = term * periods_per_year
+            period_rate = rate / periods_per_year
+            
+            if amortization_type == "French":
+                # French amortization (constant payment)
+                payment = abs(loan_amount * period_rate / (1 - (1 + period_rate)**(-periods)))
+                payments = np.full(periods, payment)
+            else:  # Italian
+                # Italian amortization (constant principal)
+                principal = loan_amount / periods
+                payments = np.zeros(periods)
+                remaining = loan_amount
+                for i in range(periods):
+                    interest = remaining * period_rate
+                    payments[i] = principal + interest
+                    remaining -= principal
+                    
+            key = (rate, term)
+            result[key] = payments
+            
+    return result
 
 class Loan:
     loans = []
@@ -1111,18 +1200,18 @@ class Loan:
 
 
     def calculate_probabilistic_pricing(self, 
-                                        initial_default: float = 0.2,
-                                        default_decay: float = 0.9, 
-                                        final_default: float = 0.4,
-                                        recovery_rate: float = 0.4,
-                                        num_iterations: int = 100,
-                                        loan_lives: list = None,
-                                        interest_rates: np.ndarray = None,
-                                        default_probabilities: list = None) -> pd.DataFrame:
+                                    initial_default: float = 0.2,
+                                    default_decay: float = 0.9, 
+                                    final_default: float = 0.4,
+                                    recovery_rate: float = 0.4,
+                                    num_iterations: int = 100,
+                                    loan_lives: list = None,
+                                    interest_rates: np.ndarray = None,
+                                    default_probabilities: list = None,
+                                    progress_callback=None) -> pd.DataFrame:
         """
         Calculate probabilistic loan pricing using Monte Carlo simulation.
-        
-        Optimized version that creates separate loan objects for each parameter combination.
+        Optimized for extremely large numbers of iterations (100k+).
         """
         # Input validation
         if loan_lives is None:
@@ -1132,122 +1221,165 @@ class Loan:
         if default_probabilities is None:
             default_probabilities = [0.1, 0.2, 0.3]
 
-        # Validate ranges
-        if not all(0 < r < 1 for r in interest_rates):
-            raise ValueError("Interest rates must be between 0 and 1")
-        if not all(l > 0 for l in loan_lives):
-            raise ValueError("Loan lives must be positive")
-        if not all(0 <= p <= 1 for p in default_probabilities):
-            raise ValueError("Default probabilities must be between 0 and 1")
-
-        results = []
+        # Convert inputs to arrays
+        loan_lives_array = np.array(loan_lives, dtype=np.int32)
+        interest_rates_array = np.array(interest_rates, dtype=np.float64)
+        default_probabilities_array = np.array(default_probabilities, dtype=np.float64)
         
-        def calculate_default_probability(loan_life):
-            default_probability_values = []
-            current_default = initial_default
+        # Determine frequency multiplier
+        frequency_map = {'monthly': 12, 'quarterly': 4, 'semi-annual': 2, 'annual': 1}
+        periods_per_year = frequency_map[self.frequency]
+        
+        # Pre-calculate all payment streams once
+        payment_streams = _generate_payment_streams(
+            self.loan_amount, 
+            interest_rates_array,
+            loan_lives_array,
+            self.amortization_type, 
+            periods_per_year
+        )
+        
+        # Calculate the total number of combinations for aggregation
+        total_parameter_combinations = len(interest_rates) * len(default_probabilities) * len(loan_lives)
+        
+        # Create aggregation structures - we'll update these directly instead of storing all results
+        # This drastically reduces memory usage
+        sum_irr = np.zeros((len(interest_rates), len(loan_lives), len(default_probabilities)))
+        count_irr = np.zeros((len(interest_rates), len(loan_lives), len(default_probabilities)), dtype=np.int32)
+        
+        # Configuration for parallel processing
+        total_calculations = num_iterations * total_parameter_combinations
+        cpu_count = max(1, os.cpu_count() - 1)  # Leave one CPU free for UI
+        max_workers = min(8, cpu_count)  # Avoid excessive thread overhead
+        
+        # Adaptive batch size based on iterations - keep batches manageable
+        batch_size = min(5000, max(1000, total_calculations // (max_workers * 10)))
+        
+        # Thread-safe progress tracking
+        progress_lock = threading.Lock()
+        progress_counter = [0]
+        
+        # This function processes a batch of calculations and updates aggregation arrays
+        def process_batch(batch_idx, start_iter, end_iter, result_arrays):
+            local_sum, local_count = result_arrays
             
-            for i in range(1, loan_life + 3):
-                if i == 1:
-                    default_probability_values.append(current_default)
-                elif i < loan_life:
-                    current_default *= default_decay
-                    default_probability_values.append(current_default) 
-                elif i == loan_life:
-                    default_probability_values.append(final_default)
-                elif i == loan_life + 1:
-                    default_probability_values.append(0)
-                else: # i == loan_life + 2
-                    default_probability_values.append(recovery_rate)
-            return default_probability_values
-
-        def calculate_adjusted_cashflow(default_probs, cashflows, loan_amount, period_rate):
-            adjusted_flows = []
-            
-            for i, (default_prob, cf) in enumerate(zip(default_probs, cashflows)):
-                if i == 0: # First flow
-                    interest_portion = period_rate * loan_amount
-                    adj_interest = interest_portion * (1 - default_prob)
-                    adjusted_flows.append(-loan_amount + adj_interest)
-                elif default_prob == recovery_rate and cf == loan_amount:
-                    adj_cf = (period_rate * loan_amount) * (1 - default_prob)
-                    adjusted_flows.append(adj_cf)
-                elif default_prob == recovery_rate:
-                    adjusted_flows.append(recovery_rate * loan_amount)
-                elif default_prob == 0 and cf == 0:
-                    adjusted_flows.append(0)
-                else:
-                    adjusted_flows.append(cf * (1 - default_prob))
+            for i in range(start_iter, end_iter):
+                # Map flat index to parameter indices
+                iter_idx = i % num_iterations
+                remaining = i // num_iterations
+                rate_idx = remaining % len(interest_rates_array)
+                remaining = remaining // len(interest_rates_array)
+                prob_idx = remaining % len(default_probabilities_array)
+                life_idx = remaining // len(default_probabilities_array)
+                
+                if life_idx >= len(loan_lives_array):
+                    continue
                     
-            return adjusted_flows
-
-        # Execute iterations
-        irr_values = []
-        rate_values = []
-        default_prob_values = [] 
-        life_values = []
-
-        for _ in range(num_iterations):
-            for rate in interest_rates:
-                for default_prob in default_probabilities:
-                    for life in loan_lives:
-                        try:
-                            # Create a lightweight loan object for this specific parameter set
-                            # No DB connection, no saving, just calculation
-                            temp_loan = Loan(
-                                db_manager=None,  # No DB operations
-                                rate=rate,
-                                term=life,
-                                loan_amount=self.loan_amount,
-                                amortization_type=self.amortization_type,
-                                frequency=self.frequency,
-                                should_save=False  # Don't save to database
-                            )
-                            
-                            # Get the cash flows for this specific loan
-                            unadjusted_cashflows = temp_loan.table['Payment'].tolist()
-                            
-                            # Calculate default probabilities for this loan life
-                            probs = calculate_default_probability(life)
-                            
-                            # Calculate adjusted cash flows
-                            adj_flows = calculate_adjusted_cashflow(
-                                probs, 
-                                unadjusted_cashflows, 
-                                temp_loan.loan_amount, 
-                                temp_loan.rate
-                            )
-                            
-                            # Calculate IRR
-                            irr = npf.irr(adj_flows)
-                            
-                            irr_values.append(irr)
-                            rate_values.append(rate)
-                            default_prob_values.append(default_prob)
-                            life_values.append(life)
-                            
-                            results.append({
-                                'Interest Rate': f"{rate:.2%}",
-                                'Loan Life': life,
-                                'Initial Default Probability': f"{default_prob:.2%}",
-                                'IRR': irr
-                            })
-                        except Exception as e:
-                            print(f"IRR calculation failed for rate={rate}, prob={default_prob}, life={life}: {str(e)}")
-                            continue
-
-        # Create results DataFrame
+                rate = interest_rates_array[rate_idx]
+                default_prob = default_probabilities_array[prob_idx]
+                life = loan_lives_array[life_idx]
+                
+                try:
+                    # Use pre-calculated cashflows
+                    unadjusted_cashflows = payment_streams[(rate, life)]
+                    
+                    # Use JIT functions for core calculations
+                    probs = _calculate_default_probability(
+                        life, initial_default, default_decay, final_default, recovery_rate
+                    )
+                    
+                    adj_flows = _calculate_adjusted_cashflow(
+                        probs, 
+                        unadjusted_cashflows,
+                        self.loan_amount, 
+                        rate/periods_per_year,
+                        recovery_rate
+                    )
+                    
+                    # Calculate IRR
+                    irr = npf.irr(adj_flows)
+                    
+                    # Update local aggregation arrays
+                    local_sum[rate_idx, life_idx, prob_idx] += irr
+                    local_count[rate_idx, life_idx, prob_idx] += 1
+                    
+                except Exception:
+                    # Skip failed calculations
+                    pass
+                    
+            # Update progress periodically
+            with progress_lock:
+                progress_counter[0] += 1
+                current = progress_counter[0]
+                if current % 1000 == 0 or current == total_calculations:
+                    percent = (current / total_calculations) * 100
+                    
+                    # Call the progress callback if provided
+                    if progress_callback:
+                        progress_callback(current, total_calculations, percent)
+                    else:
+                        # Fall back to printing if no callback provided
+                        print(f"Progress: {percent:.1f}% ({current}/{total_calculations})")
+            
+            return local_sum, local_count
+        
+        # Pre-process parameters for numba optimization
+        loan_amount_val = float(self.loan_amount)
+        amortization_type_val = str(self.amortization_type)
+        
+        # Execute calculations in parallel with shared aggregation
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for i in range(0, total_calculations, batch_size):
+                # Create thread-local aggregation arrays
+                thread_sum = np.zeros((len(interest_rates), len(loan_lives), len(default_probabilities)))
+                thread_count = np.zeros_like(thread_sum, dtype=np.int32)
+                
+                futures.append(executor.submit(
+                    process_batch, 
+                    i//batch_size, 
+                    i, 
+                    min(i + batch_size, total_calculations),
+                    (thread_sum, thread_count)
+                ))
+            
+            # Combine results from all threads
+            for future in futures:
+                batch_sum, batch_count = future.result()
+                sum_irr += batch_sum
+                count_irr += batch_count
+        
+        # Calculate means and avoid division by zero
+        with np.errstate(divide='ignore', invalid='ignore'):
+            mean_irr = np.divide(sum_irr, count_irr, out=np.zeros_like(sum_irr), where=count_irr!=0)
+        
+        # Flatten the results for DataFrame creation
+        results = []
+        for r_idx, rate in enumerate(interest_rates_array):
+            for l_idx, life in enumerate(loan_lives_array):
+                for p_idx, prob in enumerate(default_probabilities_array):
+                    if count_irr[r_idx, l_idx, p_idx] > 0:  # Only include combinations with results
+                        results.append({
+                            'Interest Rate': f"{rate:.2%}",
+                            'Loan Life': life,
+                            'Initial Default Probability': f"{prob:.2%}",
+                            'IRR': mean_irr[r_idx, l_idx, p_idx],
+                            'Sample Size': count_irr[r_idx, l_idx, p_idx]
+                        })
+        
+        # Create DataFrame and calculate standard deviation
+        if not results:
+            raise ValueError("No valid IRR calculations could be completed")
+        
         df = pd.DataFrame(results)
+        std_dev = np.nanstd(mean_irr)
         
-        # Calculate means and standard deviation
-        avg_results = df.groupby(['Interest Rate', 'Loan Life', 'Initial Default Probability']).mean().reset_index()
-        std_dev = np.std(irr_values)
-        
-        # Adjust IRR with standard deviation
-        avg_results['IRR'] = avg_results['IRR'] - std_dev
+        # Adjust IRR with risk factor (standard deviation)
+        df['IRR'] = df['IRR'] - std_dev
         
         # Create pivot table with formatting
         pivot = pd.pivot_table(
-            avg_results,
+            df,
             values='IRR', 
             index=['Interest Rate', 'Loan Life'],
             columns='Initial Default Probability',
