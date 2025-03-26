@@ -4,11 +4,11 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QDateEdit, QCheckBox, QFileDialog, QGroupBox)
+                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QDateEdit, QCheckBox, QFileDialog, QGroupBox, QProgressDialog, QProgressBar)
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen
-from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate
+from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate, QThread, pyqtSignal, pyqtSlot
 
 
 # Set the backend for matplotlib
@@ -21,6 +21,7 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 from matplotlib.figure import Figure
 
 #Imports for the backend
+import numba
 import sys
 import os
 import time
@@ -3875,6 +3876,58 @@ class ConsolidateLoansDialog(FluentDialog):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Consolidation failed: {str(e)}")
 
+
+class PricingWorker(QThread):
+    """Worker thread per il calcolo di pricing probabilistico"""
+    progress_updated = pyqtSignal(int, int, float)  # current, total, percent
+    calculation_complete = pyqtSignal(object)  # results
+    calculation_error = pyqtSignal(str)  # error message
+    
+    def __init__(self, loan, initial_default, default_decay, final_default, 
+                 recovery_rate, iterations, loan_lives, interest_rates, default_probs):
+        super().__init__()
+        self.loan = loan
+        self.initial_default = initial_default
+        self.default_decay = default_decay
+        self.final_default = final_default
+        self.recovery_rate = recovery_rate
+        self.iterations = iterations
+        self.loan_lives = loan_lives
+        self.interest_rates = interest_rates
+        self.default_probs = default_probs
+        self.is_cancelled = False
+        
+    def run(self):
+        try:
+            # Define progress callback
+            def progress_callback(current, total, percent):
+                if self.is_cancelled:
+                    raise Exception("Calculation cancelled by user")
+                self.progress_updated.emit(current, total, percent)
+            
+            # Call the calculation method with our callback
+            results = self.loan.calculate_probabilistic_pricing(
+                initial_default=self.initial_default,
+                default_decay=self.default_decay,
+                final_default=self.final_default,
+                recovery_rate=self.recovery_rate,
+                num_iterations=self.iterations,
+                loan_lives=self.loan_lives,
+                interest_rates=self.interest_rates,
+                default_probabilities=self.default_probs,
+                progress_callback=progress_callback
+            )
+            
+            # Emit the results
+            self.calculation_complete.emit(results)
+            
+        except Exception as e:
+            self.calculation_error.emit(str(e))
+    
+    def cancel(self):
+        """Mark the calculation as cancelled"""
+        self.is_cancelled = True
+
 class ProbabilisticPricingDialog(FluentDialog):
     def __init__(self, loan, parent=None):
         super().__init__("Probabilistic Loan Pricing", parent)
@@ -4042,7 +4095,7 @@ class ProbabilisticPricingDialog(FluentDialog):
             return [convert_type(x.strip()) for x in text.split(',') if x.strip()]
         except ValueError:
             raise ValueError(f"Invalid format. Expected comma-separated {convert_type.__name__} values")
-    
+        
     def calculate_pricing(self):
         try:
             # Parse input lists
@@ -4050,24 +4103,114 @@ class ProbabilisticPricingDialog(FluentDialog):
             interest_rates = np.array(self.parse_comma_list(self.interest_rates.text())) if self.interest_rates.text() else None
             default_probs = self.parse_comma_list(self.default_probs.text()) if self.default_probs.text() else None
             
-            # Calculate results
-            results = self.loan.calculate_probabilistic_pricing(
-                initial_default=self.initial_default.value(),
-                default_decay=self.default_decay.value(),
-                final_default=self.final_default.value(),
-                recovery_rate=self.recovery_rate.value(),
-                num_iterations=self.iterations.value(),
-                loan_lives=loan_lives,
-                interest_rates=interest_rates,
-                default_probabilities=default_probs
+            # Creiamo un custom dialog per poter aggiungere widget extra
+            self.progress_dialog = QDialog(self)
+            self.progress_dialog.setWindowTitle("Progress")
+            self.progress_dialog.setWindowModality(Qt.WindowModal)
+            self.progress_dialog.setMinimumWidth(400)
+            
+            # Layout principale del dialog
+            dialog_layout = QVBoxLayout(self.progress_dialog)
+            
+            # Label principale
+            main_label = QLabel("Calculating probabilistic pricing...", self.progress_dialog)
+            dialog_layout.addWidget(main_label)
+            
+            # Progress bar
+            self.progress_bar = QProgressBar(self.progress_dialog)
+            self.progress_bar.setTextVisible(True)
+            self.progress_bar.setAlignment(Qt.AlignCenter)
+            dialog_layout.addWidget(self.progress_bar)
+            
+            # Status label per informazioni aggiuntive
+            self.status_label = QLabel("Initializing...", self.progress_dialog)
+            dialog_layout.addWidget(self.status_label)
+            
+            # Pulsante di cancellazione
+            cancel_button = QPushButton("Cancel", self.progress_dialog)
+            cancel_button.clicked.connect(self.cancel_calculation)
+            dialog_layout.addWidget(cancel_button)
+            
+            # Create and configure the worker
+            self.worker = PricingWorker(
+                self.loan,
+                self.initial_default.value(),
+                self.default_decay.value(),
+                self.final_default.value(),
+                self.recovery_rate.value(),
+                self.iterations.value(),
+                loan_lives,
+                interest_rates,
+                default_probs
             )
             
-            # Convert styled DataFrame to HTML and display
-            self.results_view.setHtml(results.to_html())
+            # Connect signals
+            self.worker.progress_updated.connect(self.update_progress)
+            self.worker.calculation_complete.connect(self.handle_results)
+            self.worker.calculation_error.connect(self.handle_error)
+            
+            # Start the worker
+            self.worker.start()
+            
+            # Show the progress dialog
+            self.progress_dialog.exec_()
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to calculate pricing: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to start calculation: {str(e)}")
+            
+    def cancel_calculation(self):
+        """Cancella il calcolo in corso"""
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            self.worker.cancel()
+            self.progress_dialog.accept()
+            
+    @pyqtSlot(int, int, float)
+    def update_progress(self, current, total, percent):
+        """Update progress dialog with current status"""
+        if hasattr(self, 'progress_bar'):
+            self.progress_bar.setValue(int(percent))
+        if hasattr(self, 'status_label'):
+            self.status_label.setText(f"Completed: {current:,} of {total:,} calculations ({percent:.1f}%)")
 
+    @pyqtSlot(object)
+    def handle_results(self, results):
+        """Gestisce i risultati del calcolo completato"""
+        try:
+            # Chiudi la finestra di progresso
+            if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+                self.progress_dialog.accept()
+            
+            # Converti il DataFrame in HTML e visualizzalo nella vista risultati
+            if hasattr(self, 'results_view'):
+                self.results_view.setHtml(results.to_html())
+                
+            # Notifica all'utente che il calcolo è stato completato
+            QMessageBox.information(
+                self,
+                "Calculation Complete",
+                "The probabilistic pricing calculation has been completed successfully."
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to display results: {str(e)}"
+            )
+
+    @pyqtSlot(str)
+    def handle_error(self, error_message):
+        """Gestisce gli errori durante il calcolo"""
+        # Chiudi la finestra di progresso se è aperta
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.isVisible():
+            self.progress_dialog.accept()
+        
+        # Mostra il messaggio di errore
+        QMessageBox.critical(
+            self,
+            "Calculation Error",
+            f"An error occurred during calculation: {error_message}"
+        )
+                    
 
 class LoanSelectionDialog(FluentDialog):
     def __init__(self, loans, multi_select=False, parent=None):
