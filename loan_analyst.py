@@ -1556,58 +1556,65 @@ class Loan:
         styled = styled.format("{:.2%}")
         
         return styled
-
-    @classmethod
-    def clear_loans(cls):
-        """Pulisce la lista dei prestiti in memoria"""
-        cls.loans = []
-        
-
     @classmethod 
     def load_all_loans(cls, db_manager):
-        """Carica tutti i prestiti dal database nella lista loans"""
+        """Carica tutti i prestiti dal database nella lista loans usando threadpooling"""
         cls.clear_loans()  # Pulisce la lista esistente
         
         try:
             # Carica i dati dal database
             loans_data = db_manager.load_all_loans_from_db()
             
-            for loan_data in loans_data:
-                try:
-                    # Crea nuovo prestito con should_save=False per evitare il doppio salvataggio
-                    loan = cls(
-                        db_manager=db_manager,
-                        rate=float(loan_data[1]),
-                        term=int(loan_data[2]),
-                        loan_amount=float(loan_data[3]),
-                        amortization_type=loan_data[4],
-                        frequency=loan_data[5],
-                        rate_type=loan_data[6],
-                        use_euribor=loan_data[7],
-                        update_frequency=loan_data[8],
-                        downpayment_percent=float(loan_data[9]),
-                        start=loan_data[10].isoformat(),
-                        loan_id=str(loan_data[0]),
-                        should_save=False 
-                    )
-                    
-                    # Carica i costi aggiuntivi e le spese periodiche
-                    loan.additional_costs = db_manager.load_additional_costs(loan.loan_id)
-                    loan.periodic_expenses = db_manager.load_periodic_expenses(loan.loan_id)
-                    
-                    # Ricalcola tabella e TAEG con i nuovi costi
-                    loan.table = loan.loan_table()
-                    loan.calculate_taeg()
-                    
-                    # Aggiungi alla lista dei prestiti
-                    cls.loans.append(loan)
-                    
-                except Exception as e:
-                    print(f"Error loading loan {loan_data[0]}: {str(e)}")
-                    continue
-                    
+            # Utilizzo di thread per caricare i prestiti in parallelo
+            with ThreadPoolExecutor(max_workers=min(10, len(loans_data))) as executor:
+                future_to_loan = {executor.submit(cls._load_single_loan, db_manager, loan_data): loan_data[0] 
+                                for loan_data in loans_data}
+                
+                for future in concurrent.futures.as_completed(future_to_loan):
+                    loan_id = future_to_loan[future]
+                    try:
+                        loan = future.result()
+                        if loan:
+                            cls.loans.append(loan)
+                    except Exception as e:
+                        print(f"Error loading loan {loan_id}: {str(e)}")
+            
             return True
             
         except Exception as e:
             print(f"Error loading loans: {str(e)}")
             return False
+
+    @classmethod
+    def load_single_loan(cls, db_manager, loan_data):
+        """Carica un singolo prestito dal database - utilizzato per threading"""
+        try:
+            loan = cls(
+                db_manager=db_manager,
+                rate=float(loan_data[1]),
+                term=int(loan_data[2]),
+                loan_amount=float(loan_data[3]),
+                amortization_type=loan_data[4],
+                frequency=loan_data[5],
+                rate_type=loan_data[6],
+                use_euribor=loan_data[7],
+                update_frequency=loan_data[8],
+                downpayment_percent=float(loan_data[9]),
+                start=loan_data[10].isoformat(),
+                loan_id=str(loan_data[0]),
+                should_save=False 
+            )
+            
+            # Carica i costi aggiuntivi e le spese periodiche
+            loan.additional_costs = db_manager.load_additional_costs(loan.loan_id)
+            loan.periodic_expenses = db_manager.load_periodic_expenses(loan.loan_id)
+            
+            # Ricalcola tabella e TAEG con i nuovi costi
+            loan.table = loan.loan_table()
+            loan.calculate_taeg()
+            
+            return loan
+            
+        except Exception as e:
+            print(f"Error loading loan {loan_data[0]}: {str(e)}")
+            return None
