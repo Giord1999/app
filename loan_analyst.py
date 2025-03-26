@@ -20,246 +20,411 @@ import os
 
 
 class DbManager:
-    def __init__(self, dbname, user, password, host='localhost', port='5432'):
+    def __init__(self, dbname, user, password, host='localhost', port='5432', min_connections=1, max_connections=10):
         self.dbname = dbname
         self.user = user
         self.password = password
         self.host = host
         self.port = port
+        self.min_connections = min_connections
+        self.max_connections = max_connections
+        self._pool = None
+        self._init_pool()
  
-    def connect(self):
-        print(f"DEBUG: Connessione a DB {self.dbname} su {self.host}:{self.port} con utente {self.user}")  # <-- Stampa dettagli
-        return psycopg2.connect(
-            dbname=self.dbname,
-            user=self.user,
-            password=self.password,
-            host=self.host,
-            port=self.port
-        )
+    def _init_pool(self):
+        """Initialize the connection pool"""
+        try:
+            self._pool = psycopg2.pool.ThreadedConnectionPool(
+                self.min_connections,
+                self.max_connections,
+                dbname=self.dbname,
+                user=self.user,
+                password=self.password,
+                host=self.host,
+                port=self.port
+            )
+            print(f"DEBUG: Connection pool initialized for DB {self.dbname} on {self.host}:{self.port}")
+        except Exception as e:
+            print(f"ERROR: Could not initialize connection pool: {str(e)}")
+            raise
 
+    def get_connection(self):
+        """Get a connection from the pool"""
+        if self._pool is None:
+            self._init_pool()
+        try:
+            return self._pool.getconn()
+        except Exception as e:
+            print(f"ERROR: Failed to get connection from pool: {str(e)}")
+            # Try to re-initialize the pool and get connection again
+            self._init_pool()
+            return self._pool.getconn()
+
+    def release_connection(self, conn):
+        """Return a connection to the pool"""
+        if self._pool is not None and conn is not None:
+            self._pool.putconn(conn)
+
+    def connect(self):
+        """Legacy method for backward compatibility"""
+        print(f"DEBUG: Getting connection from pool for DB {self.dbname} via connect() method")
+        return self.get_connection()
 
     def execute_db_query(self, query, parameters=()):
-        with self.connect() as conn:
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
             cursor = conn.cursor()
             cursor.execute(query, parameters)
             conn.commit()
+            result = cursor  # Save the cursor for result access
             return cursor
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            print(f"Query execution error: {str(e)}")
+            raise
+        finally:
+            if cursor:
+                # Don't close the cursor here as it's being returned
+                # The caller is responsible for processing the cursor results
+                pass
+            if conn:
+                self.release_connection(conn)
 
     def create_db(self):
-        with self.connect() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute('''CREATE TABLE IF NOT EXISTS loans(
-                    loan_id UUID PRIMARY KEY,
-                    initial_rate DECIMAL(8,6) NOT NULL,
-                    initial_term INTEGER NOT NULL,
-                    loan_amount DECIMAL(15,2) NOT NULL,
-                    amortization_type VARCHAR(20) NOT NULL CHECK (amortization_type IN ('French', 'Italian')),
-                    frequency VARCHAR(20) NOT NULL CHECK (frequency IN ('monthly', 'quarterly', 'semi-annual', 'annual')),
-                    rate_type VARCHAR(10) NOT NULL CHECK (rate_type IN ('fixed', 'variable')),
-                    use_euribor BOOLEAN DEFAULT FALSE,
-                    update_frequency VARCHAR(20) CHECK (update_frequency IN ('monthly', 'quarterly', 'semi-annual', 'annual')),
-                    downpayment_percent DECIMAL(5,2) DEFAULT 0,
-                    start_date DATE NOT NULL,
-                    active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )
-                ''');
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''CREATE TABLE IF NOT EXISTS loans(
+                loan_id UUID PRIMARY KEY,
+                initial_rate DECIMAL(8,6) NOT NULL,
+                initial_term INTEGER NOT NULL,
+                loan_amount DECIMAL(15,2) NOT NULL,
+                amortization_type VARCHAR(20) NOT NULL CHECK (amortization_type IN ('French', 'Italian')),
+                frequency VARCHAR(20) NOT NULL CHECK (frequency IN ('monthly', 'quarterly', 'semi-annual', 'annual')),
+                rate_type VARCHAR(10) NOT NULL CHECK (rate_type IN ('fixed', 'variable')),
+                use_euribor BOOLEAN DEFAULT FALSE,
+                update_frequency VARCHAR(20) CHECK (update_frequency IN ('monthly', 'quarterly', 'semi-annual', 'annual')),
+                downpayment_percent DECIMAL(5,2) DEFAULT 0,
+                start_date DATE NOT NULL,
+                active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
 
-                cursor.execute('''CREATE TABLE IF NOT EXISTS additional_costs(
-                    loan_id UUID REFERENCES loans(loan_id),
-                    description VARCHAR(255) NOT NULL,
-                    amount DECIMAL(15,2) NOT NULL,
-                    PRIMARY KEY (loan_id, description)
-                )
-                ''');
+            cursor.execute('''CREATE TABLE IF NOT EXISTS additional_costs(
+                loan_id UUID REFERENCES loans(loan_id),
+                description VARCHAR(255) NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                PRIMARY KEY (loan_id, description)
+            )
+            ''')
 
-                cursor.execute('''CREATE TABLE IF NOT EXISTS periodic_expenses(
-                    loan_id UUID REFERENCES loans(loan_id),
-                    description VARCHAR(255) NOT NULL,
-                    amount DECIMAL(15,2) NOT NULL,
-                    PRIMARY KEY (loan_id, description)
-                )
-                ''');
+            cursor.execute('''CREATE TABLE IF NOT EXISTS periodic_expenses(
+                loan_id UUID REFERENCES loans(loan_id),
+                description VARCHAR(255) NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                PRIMARY KEY (loan_id, description)
+            )
+            ''')
 
-                cursor.execute(''' CREATE TABLE IF NOT EXISTS amortization_schedule(
-                    payment_id UUID PRIMARY KEY,
-                    loan_id UUID REFERENCES loans(loan_id),
-                    payment_date DATE NOT NULL,
-                    amount DECIMAL(15,2) NOT NULL,
-                    interest DECIMAL(15,2) NOT NULL,
-                    principal DECIMAL(15,2) NOT NULL,
-                    balance DECIMAL(15,2) NOT NULL
-                )
-                ''')
+            cursor.execute(''' CREATE TABLE IF NOT EXISTS amortization_schedule(
+                payment_id UUID PRIMARY KEY,
+                loan_id UUID REFERENCES loans(loan_id),
+                payment_date DATE NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                interest DECIMAL(15,2) NOT NULL,
+                principal DECIMAL(15,2) NOT NULL,
+                balance DECIMAL(15,2) NOT NULL
+            )
+            ''')
 
-                 # Creazione degli indici
-                cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_amortization_loan_id ON amortization_schedule(loan_id);
-                CREATE INDEX IF NOT EXISTS idx_additional_costs_loan_id ON additional_costs(loan_id);
-                CREATE INDEX IF NOT EXISTS idx_periodic_expenses_loan_id ON periodic_expenses(loan_id);
-                ''');
+            # Creazione degli indici
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_amortization_loan_id ON amortization_schedule(loan_id);
+            CREATE INDEX IF NOT EXISTS idx_additional_costs_loan_id ON additional_costs(loan_id);
+            CREATE INDEX IF NOT EXISTS idx_periodic_expenses_loan_id ON periodic_expenses(loan_id);
+            ''')
+            
+            conn.commit()
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            print(f"Database creation error: {str(e)}")
+            raise
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                self.release_connection(conn)
 
     def save_loan(self, loan):
-        with self.connect() as conn:
-            try:
-                cursor = conn.cursor()
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Convert numpy values to Python native types
+            initial_rate = float(loan.initial_rate)
+            initial_term = int(loan.initial_term)
+            loan_amount = float(loan.loan_amount)
+            downpayment_percent = float(loan.downpayment_percent)
+            
+            # Check if loan exists
+            check_query = "SELECT COUNT(*) FROM loans WHERE loan_id = %s"
+            cursor.execute(check_query, (loan.loan_id,))
+            exists = cursor.fetchone()[0] > 0
+            
+            if exists:
+                update_query = '''
+                UPDATE loans SET 
+                    initial_rate = %s, initial_term = %s, loan_amount = %s, 
+                    amortization_type = %s, frequency = %s, rate_type = %s,
+                    use_euribor = %s, update_frequency = %s, downpayment_percent = %s,
+                    start_date = %s, active = %s
+                WHERE loan_id = %s
+                '''
+                cursor.execute(update_query, (
+                    initial_rate, initial_term, loan_amount,
+                    loan.amortization_type, loan.frequency, loan.rate_type,
+                    loan.use_euribor, loan.update_frequency, downpayment_percent,
+                    loan.start.date(), loan.active, loan.loan_id
+                ))
+            else:
+                insert_query = '''
+                INSERT INTO loans (
+                    loan_id, initial_rate, initial_term, loan_amount, 
+                    amortization_type, frequency, rate_type, use_euribor,
+                    update_frequency, downpayment_percent, start_date, active
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                '''
+                cursor.execute(insert_query, (
+                    loan.loan_id, initial_rate, initial_term, loan_amount,
+                    loan.amortization_type, loan.frequency, loan.rate_type,
+                    loan.use_euribor, loan.update_frequency, downpayment_percent,
+                    loan.start.date(), loan.active
+                ))
+
+            # Save additional costs (one-time costs)
+            cursor.execute("DELETE FROM additional_costs WHERE loan_id = %s", (loan.loan_id,))
+            for desc, amount in loan.additional_costs.items():
+                cursor.execute("""
+                    INSERT INTO additional_costs (loan_id, description, amount)
+                    VALUES (%s, %s, %s)
+                """, (loan.loan_id, desc, float(amount)))
+
+            # Save periodic expenses (recurring costs)
+            cursor.execute("DELETE FROM periodic_expenses WHERE loan_id = %s", (loan.loan_id,))
+            for desc, amount in loan.periodic_expenses.items():
+                cursor.execute("""
+                    INSERT INTO periodic_expenses (loan_id, description, amount)
+                    VALUES (%s, %s, %s)
+                """, (loan.loan_id, desc, float(amount)))
                 
-                # Convert numpy values to Python native types
-                initial_rate = float(loan.initial_rate)
-                initial_term = int(loan.initial_term)
-                loan_amount = float(loan.loan_amount)
-                downpayment_percent = float(loan.downpayment_percent)
-                
-                # Check if loan exists
-                check_query = "SELECT COUNT(*) FROM loans WHERE loan_id = %s"
-                cursor.execute(check_query, (loan.loan_id,))
-                exists = cursor.fetchone()[0] > 0
-                
-                if exists:
-                    update_query = '''
-                    UPDATE loans SET 
-                        initial_rate = %s, initial_term = %s, loan_amount = %s, 
-                        amortization_type = %s, frequency = %s, rate_type = %s,
-                        use_euribor = %s, update_frequency = %s, downpayment_percent = %s,
-                        start_date = %s, active = %s
-                    WHERE loan_id = %s
-                    '''
-                    cursor.execute(update_query, (
-                        initial_rate, initial_term, loan_amount,
-                        loan.amortization_type, loan.frequency, loan.rate_type,
-                        loan.use_euribor, loan.update_frequency, downpayment_percent,
-                        loan.start.date(), loan.active, loan.loan_id
-                    ))
-                else:
-                    insert_query = '''
-                    INSERT INTO loans (
-                        loan_id, initial_rate, initial_term, loan_amount, 
-                        amortization_type, frequency, rate_type, use_euribor,
-                        update_frequency, downpayment_percent, start_date, active
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    '''
-                    cursor.execute(insert_query, (
-                        loan.loan_id, initial_rate, initial_term, loan_amount,
-                        loan.amortization_type, loan.frequency, loan.rate_type,
-                        loan.use_euribor, loan.update_frequency, downpayment_percent,
-                        loan.start.date(), loan.active
-                    ))
+            # Save amortization table
+            cursor.execute("DELETE FROM amortization_schedule WHERE loan_id = %s", (loan.loan_id,))
+            for index, row in loan.table.iterrows():
+                cursor.execute("""
+                    INSERT INTO amortization_schedule (
+                        payment_id, loan_id, payment_date, 
+                        amount, interest, principal, balance
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    str(uuid.uuid4()), loan.loan_id, index.date(),
+                    float(row['Payment']), float(row['Interest']), 
+                    float(row['Principal']), float(row['Balance'])
+                ))
 
-                # Save additional costs (one-time costs) - moved outside if/else
-                cursor.execute("DELETE FROM additional_costs WHERE loan_id = %s", (loan.loan_id,))
-                for desc, amount in loan.additional_costs.items():
-                    cursor.execute("""
-                        INSERT INTO additional_costs (loan_id, description, amount)
-                        VALUES (%s, %s, %s)
-                    """, (loan.loan_id, desc, float(amount)))
+            conn.commit()
+            return True
 
-                # Save periodic expenses (recurring costs) - moved outside if/else
-                cursor.execute("DELETE FROM periodic_expenses WHERE loan_id = %s", (loan.loan_id,))
-                for desc, amount in loan.periodic_expenses.items():
-                    cursor.execute("""
-                        INSERT INTO periodic_expenses (loan_id, description, amount)
-                        VALUES (%s, %s, %s)
-                    """, (loan.loan_id, desc, float(amount)))
-                    
-                # Save amortization table
-                cursor.execute("DELETE FROM amortization_schedule WHERE loan_id = %s", (loan.loan_id,))
-                for index, row in loan.table.iterrows():
-                    cursor.execute("""
-                        INSERT INTO amortization_schedule (
-                            payment_id, loan_id, payment_date, 
-                            amount, interest, principal, balance
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        str(uuid.uuid4()), loan.loan_id, index.date(),
-                        float(row['Payment']), float(row['Interest']), 
-                        float(row['Principal']), float(row['Balance'])
-                    ))
-
-                conn.commit()
-                return True
-
-            except Exception as e:
+        except Exception as e:
+            if conn:
                 conn.rollback()
-                print(f"Error saving loan: {str(e)}")
-                raise
+            print(f"Error saving loan: {str(e)}")
+            raise
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                self.release_connection(conn)
 
     def delete_loan(self, loan_id):
+        conn = None
+        cursor = None
         try:
-            # Elimina prima tutti i record correlati dalle tabelle dipendenti
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Delete related records first
             tables = [
-                "amortization_schedule",  # Aggiunti questi due
-                "periodic_expenses",      # che mancavano
+                "amortization_schedule",
+                "periodic_expenses",
                 "additional_costs",
-                "client_loans"            # Anche questa per sicurezza
+                "client_loans"  # Make sure this table exists or handle errors appropriately
             ]
             
             for table in tables:
-                delete_related_query = f"DELETE FROM {table} WHERE loan_id = %s"
-                self.execute_db_query(delete_related_query, (loan_id,))
+                try:
+                    cursor.execute(f"DELETE FROM {table} WHERE loan_id = %s", (loan_id,))
+                except psycopg2.Error as e:
+                    # Log and continue if table doesn't exist
+                    if "does not exist" in str(e):
+                        print(f"Warning: Table {table} does not exist. Continuing...")
+                    else:
+                        raise
             
-            # Poi elimina il prestito dalla tabella principale
-            delete_loan_query = "DELETE FROM loans WHERE loan_id = %s"
-            self.execute_db_query(delete_loan_query, (loan_id,))
+            # Then delete from the main loans table
+            cursor.execute("DELETE FROM loans WHERE loan_id = %s", (loan_id,))
             
+            conn.commit()
             return True
+            
         except Exception as e:
+            if conn:
+                conn.rollback()
             print(f"Error deleting loan: {e}")
             return False
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                self.release_connection(conn)
 
     def update_loan(self, loan):
-        query = '''
-        UPDATE loans SET
-            initial_rate = %s, initial_term = %s, loan_amount = %s, amortization_type = %s, 
-            frequency = %s, rate_type = %s, use_euribor = %s, update_frequency = %s, 
-            downpayment_percent = %s, start_date = %s, active = %s
-        WHERE loan_id = %s
-        '''
-        parameters = (
-            loan.initial_rate, loan.initial_term, loan.loan_amount, loan.amortization_type, 
-            loan.frequency, loan.rate_type, loan.use_euribor, loan.update_frequency, 
-            loan.downpayment_percent, loan.start.date(), loan.active, loan.loan_id
-        )
-        self.execute_db_query(query, parameters)
-
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            query = '''
+            UPDATE loans SET
+                initial_rate = %s, initial_term = %s, loan_amount = %s, amortization_type = %s, 
+                frequency = %s, rate_type = %s, use_euribor = %s, update_frequency = %s, 
+                downpayment_percent = %s, start_date = %s, active = %s
+            WHERE loan_id = %s
+            '''
+            parameters = (
+                float(loan.initial_rate), int(loan.initial_term), float(loan.loan_amount), loan.amortization_type, 
+                loan.frequency, loan.rate_type, loan.use_euribor, loan.update_frequency, 
+                float(loan.downpayment_percent), loan.start.date(), loan.active, loan.loan_id
+            )
+            cursor.execute(query, parameters)
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            print(f"Error updating loan: {str(e)}")
+            return False
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                self.release_connection(conn)
 
     def check_connection(self):
         """Verifica che la connessione al database sia attiva"""
+        conn = None
+        cursor = None
         try:
-            with self.connect() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute("SELECT 1")
-                    return True
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            return True
         except Exception as e:
             print(f"Database connection error: {str(e)}")
             return False
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                self.release_connection(conn)
 
     def load_all_loans_from_db(self):
         """Carica tutti i prestiti senza filtrarli per active=True."""
-        query = """
-        SELECT loan_id, initial_rate, initial_term, loan_amount, 
-            amortization_type, frequency, rate_type, use_euribor,
-            update_frequency, downpayment_percent, start_date, active
-        FROM loans 
-        ORDER BY start_date DESC
-        """
-        cursor = self.execute_db_query(query)
-        loans = cursor.fetchall()
-        print(f"DEBUG: Prestiti trovati nel DB: {loans}")  # <-- Controlla se i dati esistono
-        return loans
-
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            query = """
+            SELECT loan_id, initial_rate, initial_term, loan_amount, 
+                amortization_type, frequency, rate_type, use_euribor,
+                update_frequency, downpayment_percent, start_date, active
+            FROM loans 
+            ORDER BY start_date DESC
+            """
+            cursor.execute(query)
+            loans = cursor.fetchall()
+            print(f"DEBUG: Prestiti trovati nel DB: {len(loans)}")
+            return loans
+            
+        except Exception as e:
+            print(f"Error loading loans: {str(e)}")
+            return []
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                self.release_connection(conn)
 
     def load_additional_costs(self, loan_id):
         """Load additional costs for a loan"""
-        query = "SELECT description, amount FROM additional_costs WHERE loan_id = %s"
-        cursor = self.execute_db_query(query, (loan_id,))
-        return {row[0]: row[1] for row in cursor.fetchall()}
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            query = "SELECT description, amount FROM additional_costs WHERE loan_id = %s"
+            cursor.execute(query, (loan_id,))
+            return {row[0]: row[1] for row in cursor.fetchall()}
+            
+        except Exception as e:
+            print(f"Error loading additional costs: {str(e)}")
+            return {}
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                self.release_connection(conn)
 
     def load_periodic_expenses(self, loan_id):
         """Load periodic expenses for a loan"""
-        query = "SELECT description, amount FROM periodic_expenses WHERE loan_id = %s"
-        cursor = self.execute_db_query(query, (loan_id,))
-        return {row[0]: row[1] for row in cursor.fetchall()}
-
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            query = "SELECT description, amount FROM periodic_expenses WHERE loan_id = %s"
+            cursor.execute(query, (loan_id,))
+            return {row[0]: row[1] for row in cursor.fetchall()}
+            
+        except Exception as e:
+            print(f"Error loading periodic expenses: {str(e)}")
+            return {}
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                self.release_connection(conn)
+                
+    def close_all_connections(self):
+        """Close all connections in the pool"""
+        if self._pool is not None:
+            self._pool.closeall()
+            print("All database connections closed")
 
 # JIT-compiled function for calculating default probability
 @nb.jit(nopython=True)
