@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen
-from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate, QThread, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate, QThread, pyqtSignal, pyqtSlot, QObject
 
 
 # Set the backend for matplotlib
@@ -934,12 +934,47 @@ class AdditionalCostsDialog(FluentDialog):
         }
     
 
+class MonteCarloWorker(QObject):
+    """Worker thread for Monte Carlo simulation"""
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    
+    def __init__(self, loan, n_simulations, extra_payment_prob, 
+                 extra_payment_amount, late_payment_prob, seed=None):
+        super().__init__()
+        self.loan = loan
+        self.n_simulations = n_simulations
+        self.extra_payment_prob = extra_payment_prob
+        self.extra_payment_amount = extra_payment_amount
+        self.late_payment_prob = late_payment_prob
+        self.seed = seed
+        
+    def run(self):
+        try:
+            # Run the Monte Carlo simulation using the loan's method
+            results = self.loan.simulate_loan_lifetime(
+                n_simulations=self.n_simulations,
+                extra_payment_prob=self.extra_payment_prob,
+                extra_payment_amount=self.extra_payment_amount,
+                late_payment_prob=self.late_payment_prob,
+                seed=self.seed,
+                plot_results=False  # We'll handle plotting in the UI
+            )
+            
+            # Signal completion with results
+            self.finished.emit(results)
+            
+        except Exception as e:
+            # Signal error
+            self.error.emit(str(e))
 
 class LoanPaymentAnalysisDialog(FluentDialog):
     """Finestra per l'analisi dei pagamenti"""
     def __init__(self, loan, parent=None):
         super().__init__("Payment Analysis", parent)
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(1000)
         self.loan = loan
         
         # Create tabs for different analyses
@@ -997,11 +1032,78 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         faster_layout.addWidget(calculate_faster_btn)
         faster_layout.addWidget(self.faster_results)
 
-
+        # Monte Carlo Simulation Tab
+        monte_carlo_widget = QWidget()
+        monte_carlo_layout = QVBoxLayout(monte_carlo_widget)
+        
+        # Simulation parameters
+        mc_form = QFormLayout()
+        
+        # Number of simulations
+        self.num_simulations = QSpinBox()
+        self.num_simulations.setRange(100, 10000)
+        self.num_simulations.setValue(1000)
+        self.num_simulations.setSingleStep(100)
+        mc_form.addRow("Number of Simulations:", self.num_simulations)
+        
+        # Extra payment probability
+        self.extra_payment_prob = QDoubleSpinBox()
+        self.extra_payment_prob.setRange(0, 1)
+        self.extra_payment_prob.setValue(0.05)
+        self.extra_payment_prob.setSingleStep(0.01)
+        mc_form.addRow("Extra Payment Probability:", self.extra_payment_prob)
+        
+        # Extra payment amount
+        self.extra_payment_amount = QDoubleSpinBox()
+        self.extra_payment_amount.setRange(0, 10000)
+        self.extra_payment_amount.setValue(500)
+        self.extra_payment_amount.setPrefix("€ ")
+        self.extra_payment_amount.setSingleStep(50)
+        mc_form.addRow("Extra Payment Amount:", self.extra_payment_amount)
+        
+        # Late payment probability
+        self.late_payment_prob = QDoubleSpinBox()
+        self.late_payment_prob.setRange(0, 1)
+        self.late_payment_prob.setValue(0.01)
+        self.late_payment_prob.setSingleStep(0.01)
+        mc_form.addRow("Late Payment Probability:", self.late_payment_prob)
+        
+        # Seed for reproducibility (optional)
+        self.use_seed = QCheckBox("Use seed for reproducible results")
+        self.seed_value = QSpinBox()
+        self.seed_value.setRange(1, 999999)
+        self.seed_value.setValue(42)
+        self.seed_value.setEnabled(False)
+        self.use_seed.toggled.connect(self.seed_value.setEnabled)
+        mc_form.addRow(self.use_seed, self.seed_value)
+        
+        # Results display
+        self.mc_results = QTextEdit()
+        self.mc_results.setReadOnly(True)
+        self.mc_results.setMinimumHeight(150)
+        
+        # Progress bar
+        self.mc_progress = QProgressBar()
+        self.mc_progress.setVisible(False)
+        
+        # Calculate button
+        calculate_mc_btn = QPushButton("Run Monte Carlo Simulation")
+        calculate_mc_btn.clicked.connect(self.run_monte_carlo_simulation)
+        
+        monte_carlo_layout.addLayout(mc_form)
+        monte_carlo_layout.addWidget(calculate_mc_btn)
+        monte_carlo_layout.addWidget(self.mc_progress)
+        monte_carlo_layout.addWidget(self.mc_results)
+        
+        # Placeholder for the graph
+        self.figure_frame = QFrame()
+        self.figure_layout = QVBoxLayout(self.figure_frame)
+        monte_carlo_layout.addWidget(self.figure_frame)
 
         # Add tabs
         tab_widget.addTab(early_payment_widget, "Early Payoff Analysis")
         tab_widget.addTab(faster_payment_widget, "Faster Payoff Analysis")
+        tab_widget.addTab(monte_carlo_widget, "Monte Carlo Simulation")
         self.main_layout.insertWidget(0, tab_widget)
         
         # Close button
@@ -1018,6 +1120,103 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         years = self.years_to_payoff.value()
         result = self.loan.pay_faster(years)
         self.faster_results.setText(result)
+
+    def run_monte_carlo_simulation(self):
+        # Clear previous results
+        self.mc_results.clear()
+        self.figure_layout.removeWidget(self.figure_layout.itemAt(0).widget()) if self.figure_layout.count() > 0 else None
+        
+        # Get simulation parameters
+        n_simulations = self.num_simulations.value()
+        extra_payment_prob = self.extra_payment_prob.value()
+        extra_payment_amount = self.extra_payment_amount.value()
+        late_payment_prob = self.late_payment_prob.value()
+        seed = self.seed_value.value() if self.use_seed.isChecked() else None
+        
+        # Update UI to show progress
+        self.mc_results.setText("Running simulation...")
+        self.mc_progress.setVisible(True)
+        self.mc_progress.setValue(0)
+        
+        # Create a worker thread to run the simulation without freezing the UI
+        self.simulation_thread = QThread()
+        self.worker = MonteCarloWorker(
+            self.loan, 
+            n_simulations, 
+            extra_payment_prob, 
+            extra_payment_amount, 
+            late_payment_prob, 
+            seed
+        )
+        self.worker.moveToThread(self.simulation_thread)
+        
+        # Connect signals
+        self.simulation_thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self.update_progress)
+        self.worker.finished.connect(self.simulation_complete)
+        self.worker.error.connect(self.simulation_error)
+        self.simulation_thread.finished.connect(self.simulation_thread.deleteLater)
+        
+        # Start the simulation
+        self.simulation_thread.start()
+    
+    def update_progress(self, value):
+        self.mc_progress.setValue(value)
+    
+    def simulation_complete(self, results):
+        # Handle simulation results
+        self.mc_progress.setVisible(False)
+        
+        # Display text results
+        stats = results['base_scenario']['stats']
+        result_text = f"""<h3>Monte Carlo Simulation Results</h3>
+        <p><b>Number of Simulations:</b> {self.num_simulations.value()}</p>
+        <p><b>Mean Loan Duration:</b> {stats['mean_years']:.2f} years</p>
+        <p><b>Median Loan Duration:</b> {stats['median_years']:.2f} years</p>
+        <p><b>Standard Deviation:</b> {stats['std_years']:.2f} years</p>
+        <p><b>Range:</b> {stats['min_years']:.2f} to {stats['max_years']:.2f} years</p>
+        <p><b>68% Confidence Interval:</b> {stats['empirical_68'][0]:.2f} to {stats['empirical_68'][1]:.2f} years</p>
+        <p><b>95% Confidence Interval:</b> {stats['empirical_95'][0]:.2f} to {stats['empirical_95'][1]:.2f} years</p>
+        """
+        self.mc_results.setHtml(result_text)
+        
+        # Create and display the histogram
+        figure = Figure(figsize=(8, 4), dpi=100)
+        canvas = FigureCanvas(figure)
+        ax = figure.add_subplot(111)
+        
+        # Plot the histogram
+        ax.hist(results['base_scenario']['lifetime_years'], bins=30, 
+                alpha=0.7, color='blue', edgecolor='black')
+        
+        # Add vertical lines for mean and confidence intervals
+        mean = stats['mean_years']
+        std = stats['std_years']
+        ax.axvline(mean, color='r', linestyle='--', linewidth=2, 
+                   label=f'Mean: {mean:.2f} years')
+        ax.axvline(mean - std, color='g', linestyle=':', linewidth=1.5, 
+                  label=f'68% CI')
+        ax.axvline(mean + std, color='g', linestyle=':', linewidth=1.5)
+        
+        # Add labels and legend
+        ax.set_xlabel('Loan Duration (Years)')
+        ax.set_ylabel('Frequency')
+        ax.set_title('Monte Carlo Simulation of Loan Duration')
+        ax.legend()
+        
+        figure.tight_layout()
+        
+        # Add the canvas to the layout
+        self.figure_layout.addWidget(canvas)
+        
+        # End the thread
+        self.simulation_thread.quit()
+        
+    def simulation_error(self, error_msg):
+        self.mc_progress.setVisible(False)
+        self.mc_results.setText(f"Error in simulation: {error_msg}")
+        self.simulation_thread.quit()
+
 
 
 class AmortizationDialog(FluentDialog):
@@ -4319,6 +4518,8 @@ class LoanSelectionDialog(FluentDialog):
         """Restituisce i prestiti selezionati"""
         selected_items = self.loans_list.selectedItems()
         return [item.data(Qt.UserRole) for item in selected_items]
+
+
 
 class  ChatAssistantDialog(QDialog):
 
