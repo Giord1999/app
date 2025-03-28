@@ -9,6 +9,7 @@ import uuid
 import psycopg2
 from psycopg2 import pool
 from scipy import stats
+from scipy.stats import norm
 from scipy.optimize import brentq
 import random
 from ecbdata import ecbdata
@@ -17,9 +18,10 @@ import numba as nb
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import os
+from tqdm import tqdm
 import threading
 
-
+#TODO: IMPELMENTARE SISTEMA CHECK DI PAGAMENTI
 
 class DbManager:
     def __init__(self, dbname, user, password, host='localhost', port='5432', min_connections=1, max_connections=1000000000000000000000000000000000000000000000000000000000000000000000000000000000):
@@ -620,6 +622,69 @@ def _flatten_payment_streams(rates, terms, payment_dict):
                 values.append(payment_dict[key])
                 
     return keys, values
+
+# Funzioni JIT compilate per l'efficienza computazionale
+@nb.jit(nopython=True)
+def _mc_simulate_loan_lifetime(
+    principal, period_rate, monthly_payment, periods, 
+    amortization_type_code, extra_payment_prob, extra_payment_amount,
+    late_payment_prob, seed=None
+):
+    """Simula un singolo scenario di durata del mutuo"""
+    if seed is not None:
+        np.random.seed(seed)
+    
+    balance = principal
+    n_payments = 0
+    
+    # Per ammortamento italiano (ammortization_type_code=1)
+    principal_payment = principal / periods if amortization_type_code == 1 else 0
+    
+    while balance > 0:
+        n_payments += 1
+        
+        # Calcolo interessi
+        interest_payment = balance * period_rate
+        
+        # Calcolo quota capitale in base al tipo di ammortamento
+        if amortization_type_code == 0:  # French
+            principal_payment = monthly_payment - interest_payment
+        else:  # Italian (la quota capitale è costante)
+            pass  # principal_payment già calcolato
+            
+        # Pagamento standard
+        principal_payment_applied = min(balance, principal_payment)
+        balance -= principal_payment_applied
+        
+        # Possibile pagamento extra
+        if np.random.random() < extra_payment_prob:
+            extra_payment = min(balance, extra_payment_amount)
+            balance -= extra_payment
+            
+        # Possibile ritardo pagamento (aggiunge interessi extra)
+        if np.random.random() < late_payment_prob:
+            balance += balance * period_rate
+    
+    return n_payments
+
+@nb.jit(nopython=True)
+def _mc_run_simulations(
+    principal, period_rate, monthly_payment, periods,
+    amortization_type_code, extra_payment_prob, extra_payment_amount,
+    late_payment_prob, n_simulations, seed=None
+):
+    """Esegue multiple simulazioni Monte Carlo"""
+    results = np.zeros(n_simulations)
+    
+    for i in range(n_simulations):
+        sim_seed = None if seed is None else seed + i
+        results[i] = _mc_simulate_loan_lifetime(
+            principal, period_rate, monthly_payment, periods,
+            amortization_type_code, extra_payment_prob, extra_payment_amount,
+            late_payment_prob, sim_seed
+        )
+    
+    return results
 
 class Loan:
     loans = []
@@ -1626,6 +1691,183 @@ class Loan:
         styled = styled.format("{:.2%}")
         
         return styled
+    
+    def simulate_loan_lifetime(
+        self, 
+        n_simulations=1000,
+        extra_payment_prob=0.05,
+        extra_payment_amount=500,
+        late_payment_prob=0.01,
+        seed=None,
+        plot_results=True,
+        scenarios=None
+    ):
+        """
+        Simula la durata del prestito utilizzando il metodo Monte Carlo.
+        
+        Parameters:
+        -----------
+        n_simulations : int
+            Numero di simulazioni da eseguire
+        extra_payment_prob : float
+            Probabilità di effettuare un pagamento extra (0-1)
+        extra_payment_amount : float
+            Importo del pagamento extra
+        late_payment_prob : float
+            Probabilità di un pagamento in ritardo (0-1)
+        seed : int, optional
+            Seme per la generazione casuale
+        plot_results : bool
+            Se True, visualizza grafici dei risultati
+        scenarios : list of dict, optional
+            Lista di scenari da simulare, dove ogni scenario è un dizionario con
+            parametri differenti (es. diverse probabilità di pagamento extra)
+            
+        Returns:
+        --------
+        dict
+            Risultati delle simulazioni, incluse statistiche e distribuzioni
+        """
+        # Converti il tipo di ammortamento in codice numerico per numba
+        amortization_type_code = 0 if self.amortization_type == "French" else 1
+        
+        # Prepara risultati
+        results = {}
+        
+        # Caso singolo scenario
+        if scenarios is None:
+            # Esegui simulazioni
+            loan_lifetime_periods = _mc_run_simulations(
+                self.loan_amount,
+                self.rate,  # Il tasso è già convertito in periodicità corretta
+                self.pmt,
+                self.periods,
+                amortization_type_code,
+                extra_payment_prob,
+                extra_payment_amount,
+                late_payment_prob,
+                n_simulations,
+                seed
+            )
+            
+            # Converti periodi in anni in base alla frequenza
+            frequency_factor = {
+                'monthly': 12,
+                'quarterly': 4,
+                'semi-annual': 2,
+                'annual': 1
+            }.get(self.frequency, 12)
+            
+            loan_lifetime_years = loan_lifetime_periods / frequency_factor
+            
+            # Calcola statistiche
+            mean = np.mean(loan_lifetime_years)
+            std = np.std(loan_lifetime_years)
+            
+            results['base_scenario'] = {
+                'lifetime_periods': loan_lifetime_periods,
+                'lifetime_years': loan_lifetime_years,
+                'stats': {
+                    'mean_years': mean,
+                    'median_years': np.median(loan_lifetime_years),
+                    'std_years': std,
+                    'min_years': np.min(loan_lifetime_years),
+                    'max_years': np.max(loan_lifetime_years),
+                    'empirical_68': [mean - std, mean + std],
+                    'empirical_95': [mean - 2*std, mean + 2*std],
+                    'empirical_99.7': [mean - 3*std, mean + 3*std],
+                }
+            }
+            
+            if plot_results:
+                plt.figure(figsize=(10, 6))
+                plt.hist(loan_lifetime_years, bins='auto', alpha=0.7, color='b', edgecolor='black')
+                plt.title('Distribuzione della durata del prestito')
+                plt.xlabel('Anni')
+                plt.ylabel('Frequenza')
+                plt.axvline(mean, color='r', linestyle='--', label=f'Media: {mean:.2f} anni')
+                plt.axvline(mean - std, color='g', linestyle=':', label=f'68% ({mean-std:.2f}, {mean+std:.2f})')
+                plt.axvline(mean + std, color='g', linestyle=':')
+                plt.legend()
+                plt.show()
+                
+        # Caso multi-scenario
+        else:
+            for i, scenario in enumerate(scenarios):
+                # Estrai parametri dallo scenario o usa default
+                ep_prob = scenario.get('extra_payment_prob', extra_payment_prob)
+                ep_amount = scenario.get('extra_payment_amount', extra_payment_amount)
+                lp_prob = scenario.get('late_payment_prob', late_payment_prob)
+                scenario_name = scenario.get('name', f"Scenario {i+1}")
+                
+                # Esegui simulazioni per questo scenario
+                loan_lifetime_periods = _mc_run_simulations(
+                    self.loan_amount,
+                    self.rate,
+                    self.pmt,
+                    self.periods,
+                    amortization_type_code,
+                    ep_prob,
+                    ep_amount,
+                    lp_prob,
+                    n_simulations,
+                    seed
+                )
+                
+                # Converti periodi in anni
+                frequency_factor = {
+                    'monthly': 12, 'quarterly': 4, 
+                    'semi-annual': 2, 'annual': 1
+                }.get(self.frequency, 12)
+                
+                loan_lifetime_years = loan_lifetime_periods / frequency_factor
+                
+                # Calcola statistiche
+                mean = np.mean(loan_lifetime_years)
+                std = np.std(loan_lifetime_years)
+                
+                results[scenario_name] = {
+                    'parameters': {
+                        'extra_payment_prob': ep_prob,
+                        'extra_payment_amount': ep_amount,
+                        'late_payment_prob': lp_prob,
+                    },
+                    'lifetime_periods': loan_lifetime_periods,
+                    'lifetime_years': loan_lifetime_years,
+                    'stats': {
+                        'mean_years': mean,
+                        'median_years': np.median(loan_lifetime_years),
+                        'std_years': std,
+                        'min_years': np.min(loan_lifetime_years),
+                        'max_years': np.max(loan_lifetime_years),
+                        'empirical_68': [mean - std, mean + std],
+                        'empirical_95': [mean - 2*std, mean + 2*std],
+                        'empirical_99.7': [mean - 3*std, mean + 3*std],
+                    }
+                }
+            
+            if plot_results:
+                plt.figure(figsize=(12, 7))
+                for name, data in results.items():
+                    plt.hist(data['lifetime_years'], bins='auto', alpha=0.5, label=name)
+                plt.title('Confronto degli scenari di durata del prestito')
+                plt.xlabel('Anni')
+                plt.ylabel('Frequenza')
+                plt.legend()
+                plt.show()
+                
+                # Visualizza anche un grafico di confronto dei valori medi
+                means = [data['stats']['mean_years'] for data in results.values()]
+                plt.figure(figsize=(10, 6))
+                plt.bar(results.keys(), means)
+                plt.title('Durata media per scenario')
+                plt.xlabel('Scenario')
+                plt.ylabel('Durata media (anni)')
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                plt.show()
+        
+        return results
 
     @classmethod
     def clear_loans(cls):
