@@ -932,7 +932,6 @@ class AdditionalCostsDialog(FluentDialog):
             'additional_costs': one_time_costs,
             'periodic_expenses': periodic_costs
         }
-    
 
 class MonteCarloWorker(QObject):
     """Worker thread for Monte Carlo simulation"""
@@ -941,7 +940,7 @@ class MonteCarloWorker(QObject):
     error = pyqtSignal(str)
     
     def __init__(self, loan, n_simulations, extra_payment_prob, 
-                 extra_payment_amount, late_payment_prob, seed=None):
+                 extra_payment_amount, late_payment_prob, seed=None, scenarios=None):
         super().__init__()
         self.loan = loan
         self.n_simulations = n_simulations
@@ -949,6 +948,7 @@ class MonteCarloWorker(QObject):
         self.extra_payment_amount = extra_payment_amount
         self.late_payment_prob = late_payment_prob
         self.seed = seed
+        self.scenarios = scenarios
         
     def run(self):
         try:
@@ -959,7 +959,8 @@ class MonteCarloWorker(QObject):
                 extra_payment_amount=self.extra_payment_amount,
                 late_payment_prob=self.late_payment_prob,
                 seed=self.seed,
-                plot_results=False  # We'll handle plotting in the UI
+                plot_results=False,  # We'll handle plotting in the UI
+                scenarios=self.scenarios  # Pass the scenarios parameter
             )
             
             # Signal completion with results
@@ -1041,7 +1042,7 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         
         # Number of simulations
         self.num_simulations = QSpinBox()
-        self.num_simulations.setRange(100, 10000)
+        self.num_simulations.setRange(100, 2147483647)
         self.num_simulations.setValue(1000)
         self.num_simulations.setSingleStep(100)
         mc_form.addRow("Number of Simulations:", self.num_simulations)
@@ -1076,7 +1077,31 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         self.seed_value.setEnabled(False)
         self.use_seed.toggled.connect(self.seed_value.setEnabled)
         mc_form.addRow(self.use_seed, self.seed_value)
+
+        # Add multi-scenario toggle
+        self.multi_scenario_enabled = QCheckBox("Enable multi-scenario comparison")
+        self.multi_scenario_enabled.toggled.connect(self.toggle_multi_scenario)
+        mc_form.addRow(self.multi_scenario_enabled)
         
+        # Container for scenarios
+        self.scenarios_container = QWidget()
+        self.scenarios_layout = QVBoxLayout(self.scenarios_container)
+        self.scenarios_container.setVisible(False)
+        monte_carlo_layout.addWidget(self.scenarios_container)
+        
+        # Scenario management buttons
+        scenario_buttons_layout = QHBoxLayout()
+        self.add_scenario_btn = QPushButton("Add Scenario")
+        self.add_scenario_btn.clicked.connect(self.add_scenario)
+        self.remove_scenario_btn = QPushButton("Remove Last Scenario")
+        self.remove_scenario_btn.clicked.connect(self.remove_scenario)
+        scenario_buttons_layout.addWidget(self.add_scenario_btn)
+        scenario_buttons_layout.addWidget(self.remove_scenario_btn)
+        self.scenarios_layout.addLayout(scenario_buttons_layout)
+        
+        # Initialize scenarios list
+        self.scenarios = []
+
         # Results display
         self.mc_results = QTextEdit()
         self.mc_results.setReadOnly(True)
@@ -1100,10 +1125,29 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         self.figure_layout = QVBoxLayout(self.figure_frame)
         monte_carlo_layout.addWidget(self.figure_frame)
 
+        # Aggiungi bottoni per gestione grafico
+        graph_buttons_layout = QHBoxLayout()
+        maximize_graph_btn = QPushButton("Maximize Graph")
+        maximize_graph_btn.clicked.connect(self.maximize_graph)
+        save_graph_btn = QPushButton("Save Graph")
+        save_graph_btn.clicked.connect(self.save_graph)
+        graph_buttons_layout.addWidget(maximize_graph_btn)
+        graph_buttons_layout.addWidget(save_graph_btn)
+        
+        # Aggiungi prima i bottoni, poi lo spazio per il grafico
+        monte_carlo_layout.addLayout(graph_buttons_layout)
+        monte_carlo_layout.addWidget(self.figure_frame)
+
+
+        # Wrappare il contenuto in uno scroll area
+        monte_carlo_scroll = QScrollArea()
+        monte_carlo_scroll.setWidgetResizable(True)
+        monte_carlo_scroll.setWidget(monte_carlo_widget)
+
         # Add tabs
         tab_widget.addTab(early_payment_widget, "Early Payoff Analysis")
         tab_widget.addTab(faster_payment_widget, "Faster Payoff Analysis")
-        tab_widget.addTab(monte_carlo_widget, "Monte Carlo Simulation")
+        tab_widget.addTab(monte_carlo_scroll, "Monte Carlo Simulation")
         self.main_layout.insertWidget(0, tab_widget)
         
         # Close button
@@ -1121,24 +1165,167 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         result = self.loan.pay_faster(years)
         self.faster_results.setText(result)
 
+    def toggle_multi_scenario(self, enabled):
+        """Toggle visibility of multi-scenario container"""
+        self.scenarios_container.setVisible(enabled)
+        if enabled and not self.scenarios:
+            self.add_scenario()  # Add first scenario automatically
+
+    def add_scenario(self):
+        """Add a new scenario to the list"""
+        # Create a group box for the scenario
+        index = len(self.scenarios) + 1
+        scenario_box = QGroupBox(f"Scenario {index}")
+        scenario_layout = QFormLayout(scenario_box)
+        
+        # Add parameter inputs
+        extra_prob_spinner = QDoubleSpinBox()
+        extra_prob_spinner.setRange(0, 1)
+        extra_prob_spinner.setValue(0.05)
+        extra_prob_spinner.setSingleStep(0.01)
+        scenario_layout.addRow("Extra Payment Probability:", extra_prob_spinner)
+        
+        extra_amount_spinner = QDoubleSpinBox()
+        extra_amount_spinner.setRange(0, 10000)
+        extra_amount_spinner.setValue(500)
+        extra_amount_spinner.setPrefix("€ ")
+        extra_amount_spinner.setSingleStep(50)
+        scenario_layout.addRow("Extra Payment Amount:", extra_amount_spinner)
+        
+        late_prob_spinner = QDoubleSpinBox()
+        late_prob_spinner.setRange(0, 1)
+        late_prob_spinner.setValue(0.01)
+        late_prob_spinner.setSingleStep(0.01)
+        scenario_layout.addRow("Late Payment Probability:", late_prob_spinner)
+        
+        # Store scenario data
+        scenario_data = {
+            'box': scenario_box,
+            'prob_spinner': extra_prob_spinner,
+            'amount_spinner': extra_amount_spinner,
+            'late_spinner': late_prob_spinner
+        }
+        self.scenarios.append(scenario_data)
+        
+        # Add to UI
+        self.scenarios_layout.addWidget(scenario_box)
+
+    def remove_scenario(self):
+        """Remove the last scenario from the list"""
+        if self.scenarios:
+            scenario = self.scenarios.pop()
+            scenario['box'].deleteLater()
+
+    # Aggiungi questi metodi alla classe LoanPaymentAnalysisDialog
+    def maximize_graph(self):
+        """Apre una finestra dedicata per visualizzare il grafico a dimensione completa"""
+        if hasattr(self, 'current_figure') and self.current_figure:
+            # Crea una finestra di dialogo per il grafico
+            graph_dialog = QDialog(self)
+            graph_dialog.setWindowTitle("Monte Carlo Simulation Graph")
+            graph_dialog.resize(900, 600)
+            
+            # Crea un nuovo layout per la finestra
+            layout = QVBoxLayout(graph_dialog)
+            
+            # Clona la figura attuale
+            new_figure = Figure(figsize=(9, 6), dpi=100)
+            new_canvas = FigureCanvas(new_figure)
+            
+            # Copia il contenuto della figura attuale
+            if hasattr(self, 'multi_scenario') and self.multi_scenario:
+                # Ri-crea il grafico multi-scenario
+                ax = new_figure.add_subplot(111)
+                colors = ['blue', 'green', 'red', 'purple', 'orange', 'brown', 'pink']
+                
+                for i, (scenario_name, scenario_data) in enumerate(self.current_results.items()):
+                    color = colors[i % len(colors)]
+                    ax.hist(scenario_data['lifetime_years'], bins=20, 
+                            alpha=0.5, label=scenario_name, color=color)
+                
+                ax.set_xlabel('Loan Duration (Years)')
+                ax.set_ylabel('Frequency')
+                ax.set_title('Comparison of Scenarios')
+                ax.legend()
+            else:
+                # Ri-crea il grafico singolo scenario
+                stats = self.current_results['base_scenario']['stats']
+                ax = new_figure.add_subplot(111)
+                ax.hist(self.current_results['base_scenario']['lifetime_years'], bins=30, 
+                    alpha=0.7, color='blue', edgecolor='black')
+                
+                mean = stats['mean_years']
+                std = stats['std_years']
+                ax.axvline(mean, color='r', linestyle='--', linewidth=2, 
+                        label=f'Mean: {mean:.2f} years')
+                ax.axvline(mean - std, color='g', linestyle=':', linewidth=1.5, 
+                        label=f'68% CI')
+                ax.axvline(mean + std, color='g', linestyle=':', linewidth=1.5)
+                
+                ax.set_xlabel('Loan Duration (Years)')
+                ax.set_ylabel('Frequency')
+                ax.set_title('Monte Carlo Simulation of Loan Duration')
+                ax.legend()
+            
+            new_figure.tight_layout()
+            layout.addWidget(new_canvas)
+            
+            # Bottone per chiudere
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(graph_dialog.close)
+            layout.addWidget(close_btn)
+            
+            graph_dialog.exec_()
+
+    def save_graph(self):
+        """Salva il grafico come file immagine"""
+        if hasattr(self, 'current_figure') and self.current_figure:
+            options = QFileDialog.Options()
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Save Graph", "", 
+                "PNG Files (*.png);;JPEG Files (*.jpg);;PDF Files (*.pdf);;SVG Files (*.svg)", 
+                options=options
+            )
+            
+            if file_path:
+                self.current_figure.savefig(file_path, dpi=300, bbox_inches='tight')
+                QMessageBox.information(self, "Success", f"Graph saved to {file_path}")
+
     def run_monte_carlo_simulation(self):
         # Clear previous results
         self.mc_results.clear()
-        self.figure_layout.removeWidget(self.figure_layout.itemAt(0).widget()) if self.figure_layout.count() > 0 else None
+        if self.figure_layout.count() > 0:
+            self.figure_layout.removeWidget(self.figure_layout.itemAt(0).widget())
         
-        # Get simulation parameters
+        # Get base simulation parameters
         n_simulations = self.num_simulations.value()
         extra_payment_prob = self.extra_payment_prob.value()
         extra_payment_amount = self.extra_payment_amount.value()
         late_payment_prob = self.late_payment_prob.value()
         seed = self.seed_value.value() if self.use_seed.isChecked() else None
         
+        # Check if multi-scenario mode is active
+        if hasattr(self, "multi_scenario_enabled") and self.multi_scenario_enabled.isChecked():
+            # Collect all scenarios
+            scenarios = [
+                {
+                    'name': f"Scenario {i+1}",
+                    'extra_payment_prob': scenario['prob_spinner'].value(),
+                    'extra_payment_amount': scenario['amount_spinner'].value(),
+                    'late_payment_prob': scenario['late_spinner'].value()
+                } 
+                for i, scenario in enumerate(self.scenarios)
+            ]
+        else:
+            # Single scenario mode
+            scenarios = None
+        
         # Update UI to show progress
         self.mc_results.setText("Running simulation...")
         self.mc_progress.setVisible(True)
         self.mc_progress.setValue(0)
         
-        # Create a worker thread to run the simulation without freezing the UI
+        # Create a worker thread to run the simulation
         self.simulation_thread = QThread()
         self.worker = MonteCarloWorker(
             self.loan, 
@@ -1146,7 +1333,8 @@ class LoanPaymentAnalysisDialog(FluentDialog):
             extra_payment_prob, 
             extra_payment_amount, 
             late_payment_prob, 
-            seed
+            seed,
+            scenarios  # Pass scenarios to worker
         )
         self.worker.moveToThread(self.simulation_thread)
         
@@ -1159,7 +1347,7 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         
         # Start the simulation
         self.simulation_thread.start()
-    
+            
     def update_progress(self, value):
         self.mc_progress.setValue(value)
     
@@ -1167,56 +1355,139 @@ class LoanPaymentAnalysisDialog(FluentDialog):
         # Handle simulation results
         self.mc_progress.setVisible(False)
         
-        # Display text results
-        stats = results['base_scenario']['stats']
-        result_text = f"""<h3>Monte Carlo Simulation Results</h3>
-        <p><b>Number of Simulations:</b> {self.num_simulations.value()}</p>
-        <p><b>Mean Loan Duration:</b> {stats['mean_years']:.2f} years</p>
-        <p><b>Median Loan Duration:</b> {stats['median_years']:.2f} years</p>
-        <p><b>Standard Deviation:</b> {stats['std_years']:.2f} years</p>
-        <p><b>Range:</b> {stats['min_years']:.2f} to {stats['max_years']:.2f} years</p>
-        <p><b>68% Confidence Interval:</b> {stats['empirical_68'][0]:.2f} to {stats['empirical_68'][1]:.2f} years</p>
-        <p><b>95% Confidence Interval:</b> {stats['empirical_95'][0]:.2f} to {stats['empirical_95'][1]:.2f} years</p>
-        """
-        self.mc_results.setHtml(result_text)
+        # Check if we have multiple scenarios or just one
+        multi_scenario = len(results) > 1 and 'base_scenario' not in results
         
-        # Create and display the histogram
-        figure = Figure(figsize=(8, 4), dpi=100)
-        canvas = FigureCanvas(figure)
-        ax = figure.add_subplot(111)
+        # Store the results for later use by maximize_graph and save_graph methods
+        self.current_results = results
+        self.multi_scenario = multi_scenario
         
-        # Plot the histogram
-        ax.hist(results['base_scenario']['lifetime_years'], bins=30, 
-                alpha=0.7, color='blue', edgecolor='black')
+        if not multi_scenario:
+            # Single scenario display (existing code)
+            stats = results['base_scenario']['stats']
+            result_text = f"""<h3>Monte Carlo Simulation Results</h3>
+            <p><b>Number of Simulations:</b> {self.num_simulations.value()}</p>
+            <p><b>Mean Loan Duration:</b> {stats['mean_years']:.2f} years</p>
+            <p><b>Median Loan Duration:</b> {stats['median_years']:.2f} years</p>
+            <p><b>Standard Deviation:</b> {stats['std_years']:.2f} years</p>
+            <p><b>Range:</b> {stats['min_years']:.2f} to {stats['max_years']:.2f} years</p>
+            <p><b>68% Confidence Interval:</b> {stats['empirical_68'][0]:.2f} to {stats['empirical_68'][1]:.2f} years</p>
+            <p><b>95% Confidence Interval:</b> {stats['empirical_95'][0]:.2f} to {stats['empirical_95'][1]:.2f} years</p>
+            """
+            self.mc_results.setHtml(result_text)
+            
+            # Create and display the histogram for single scenario
+            figure = Figure(figsize=(8, 4), dpi=100)
+            canvas = FigureCanvas(figure)
+            ax = figure.add_subplot(111)
+            
+            # Plot the histogram
+            ax.hist(results['base_scenario']['lifetime_years'], bins=30, 
+                    alpha=0.7, color='blue', edgecolor='black')
+            
+            # Add vertical lines for mean and confidence intervals
+            mean = stats['mean_years']
+            std = stats['std_years']
+            ax.axvline(mean, color='r', linestyle='--', linewidth=2, 
+                    label=f'Mean: {mean:.2f} years')
+            ax.axvline(mean - std, color='g', linestyle=':', linewidth=1.5, 
+                    label=f'68% CI')
+            ax.axvline(mean + std, color='g', linestyle=':', linewidth=1.5)
+            
+            # Add labels and legend
+            ax.set_xlabel('Loan Duration (Years)')
+            ax.set_ylabel('Frequency')
+            ax.set_title('Monte Carlo Simulation of Loan Duration')
+            ax.legend()
+            
+        else:
+            # Multi-scenario display
+            # Generate summary text for all scenarios
+            result_text = "<h3>Multi-Scenario Monte Carlo Simulation Results</h3>"
+            result_text += f"<p><b>Number of Simulations per Scenario:</b> {self.num_simulations.value()}</p><hr>"
+            
+            # Create comparison table
+            result_text += "<table border='1' cellpadding='5' style='border-collapse: collapse;'>"
+            result_text += "<tr><th>Scenario</th><th>Mean (years)</th><th>Median (years)</th><th>Std Dev</th><th>Range (years)</th></tr>"
+            
+            for scenario_name, scenario_data in results.items():
+                stats = scenario_data['stats']
+                result_text += f"""<tr>
+                    <td>{scenario_name}</td>
+                    <td>{stats['mean_years']:.2f}</td>
+                    <td>{stats['median_years']:.2f}</td>
+                    <td>{stats['std_years']:.2f}</td>
+                    <td>{stats['min_years']:.2f} - {stats['max_years']:.2f}</td>
+                </tr>"""
+            
+            result_text += "</table>"
+            self.mc_results.setHtml(result_text)
+            
+            # Create comparative histogram
+            figure = Figure(figsize=(8, 5), dpi=100)
+            canvas = FigureCanvas(figure)
+            ax = figure.add_subplot(111)
+            
+            # Plot histograms for each scenario with different colors
+            colors = ['blue', 'green', 'red', 'purple', 'orange', 'brown', 'pink']
+            for i, (scenario_name, scenario_data) in enumerate(results.items()):
+                color = colors[i % len(colors)]
+                ax.hist(scenario_data['lifetime_years'], bins=20, 
+                        alpha=0.5, label=scenario_name, color=color)
+            
+            # Add labels and legend
+            ax.set_xlabel('Loan Duration (Years)')
+            ax.set_ylabel('Frequency')
+            ax.set_title('Comparison of Scenarios')
+            ax.legend()
         
-        # Add vertical lines for mean and confidence intervals
-        mean = stats['mean_years']
-        std = stats['std_years']
-        ax.axvline(mean, color='r', linestyle='--', linewidth=2, 
-                   label=f'Mean: {mean:.2f} years')
-        ax.axvline(mean - std, color='g', linestyle=':', linewidth=1.5, 
-                  label=f'68% CI')
-        ax.axvline(mean + std, color='g', linestyle=':', linewidth=1.5)
-        
-        # Add labels and legend
-        ax.set_xlabel('Loan Duration (Years)')
-        ax.set_ylabel('Frequency')
-        ax.set_title('Monte Carlo Simulation of Loan Duration')
-        ax.legend()
-        
+        # Store the figure after it's created
+        self.current_figure = figure
         figure.tight_layout()
         
         # Add the canvas to the layout
+        if self.figure_layout.count() > 0:
+            old_item = self.figure_layout.itemAt(0).widget()
+            self.figure_layout.removeWidget(old_item)
+            old_item.deleteLater()
         self.figure_layout.addWidget(canvas)
         
         # End the thread
         self.simulation_thread.quit()
-        
+                        
     def simulation_error(self, error_msg):
         self.mc_progress.setVisible(False)
         self.mc_results.setText(f"Error in simulation: {error_msg}")
         self.simulation_thread.quit()
 
+    def create_scrollable_tab(self, widget):
+        """Helper per creare una tab scrollabile"""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(widget)
+        
+        # Imposta uno stile per lo scroll
+        scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                background: #f0f0f0;
+                width: 12px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #c0c0c0;
+                min-height: 20px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #a0a0a0;
+            }
+        """)
+        
+        return scroll
 
 
 class AmortizationDialog(FluentDialog):
