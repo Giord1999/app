@@ -4,13 +4,13 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QAction, QTabWidget, QFrame, QDateEdit, QCheckBox, QFileDialog, QGroupBox, QProgressDialog, QProgressBar)
+                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QStackedWidget, QAction, QTabWidget, QFrame, QGridLayout, QDateEdit, QCheckBox, QFileDialog, QGroupBox, QProgressDialog, QProgressBar)
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen
-from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate, QThread, pyqtSignal, pyqtSlot, QObject
-
-
+from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate, QThread, pyqtSignal, pyqtSlot, QObject, QUrl
+from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
+from PyQt5.QtWebChannel import QWebChannel
 # Set the backend for matplotlib
 import matplotlib
 matplotlib.use('Qt5Agg')
@@ -22,6 +22,7 @@ from matplotlib.figure import Figure
 
 #Imports for the backend
 import numba
+import json
 import sys
 import os
 import time
@@ -32,7 +33,7 @@ from loan import Loan, DbManager
 from ai_chatbot_loan import Chatbot
 from loan_crm import LoanCRM
 from loan_report import LoanReport
-
+from loan_dashboard import DashboardBackend
 
 def resource_path(relative_path):
     """Ottiene il percorso assoluto delle risorse, sia in modalità development che in eseguibile"""
@@ -2567,7 +2568,7 @@ class ClientDialog(FluentDialog):
         # State
         self.state = QLineEdit()
         self.state.setText(self.client_data.get("state", ""))
-        form_layout.addRow("State:", self.state)
+        form_layout.addRow("Province:", self.state)
         
         # ZIP Code
         self.zip_code = QLineEdit()
@@ -2700,7 +2701,7 @@ class ClientDetailsDialog(FluentDialog):
         Email: {self.client_data.get('email', 'Not provided')}</p>
         <p><b>Address:</b><br>
         {self.client_data.get('address', '')}<br>
-        {self.client_data.get('city', '')}, {self.client_data.get('state', '')} {self.client_data.get('zip_code', '')}<br>
+        {self.client_data.get('city', '')}, {self.client_data.get('province', '')} {self.client_data.get('zip_code', '')}<br>
         {self.client_data.get('country', '')}</p>
         <p><b>Employment:</b><br>
         Occupation: {self.client_data.get('occupation', 'Not provided')}<br>
@@ -2810,7 +2811,7 @@ class CorporationDialog(FluentDialog):
         # State
         self.state = QLineEdit()
         self.state.setText(self.corporation_data.get("state", ""))
-        form_layout.addRow("State:", self.state)
+        form_layout.addRow("Province:", self.state)
         
         # ZIP Code
         self.zip_code = QLineEdit()
@@ -2944,7 +2945,7 @@ class CorporationDetailsDialog(FluentDialog):
         Website: {self.corporation_data.get('website', 'Not provided')}</p>
         <p><b>Address:</b><br>
         {self.corporation_data.get('headquarters_address', '')}<br>
-        {self.corporation_data.get('city', '')}, {self.corporation_data.get('state', '')} {self.corporation_data.get('zip_code', '')}<br>
+        {self.corporation_data.get('city', '')}, {self.corporation_data.get('province', '')} {self.corporation_data.get('zip_code', '')}<br>
         {self.corporation_data.get('country', '')}</p>
         <p><b>Primary Contact:</b><br>
         Name: {self.corporation_data.get('primary_contact_name', 'Not provided')}<br>
@@ -3240,7 +3241,7 @@ class CorporationDetailsDialog(FluentDialog):
         Website: {self.corporation_data.get('website', 'Not provided')}</p>
         <p><b>Address:</b><br>
         {self.corporation_data.get('headquarters_address', '')}<br>
-        {self.corporation_data.get('city', '')}, {self.corporation_data.get('state', '')} {self.corporation_data.get('zip_code', '')}<br>
+        {self.corporation_data.get('city', '')}, {self.corporation_data.get('province', '')} {self.corporation_data.get('zip_code', '')}<br>
         {self.corporation_data.get('country', '')}</p>
         <p><b>Primary Contact:</b><br>
         Name: {self.corporation_data.get('primary_contact_name', 'Not provided')}<br>
@@ -3530,6 +3531,749 @@ class AssignLoanDialog(FluentDialog):
 
 
 
+class DashboardDialog(FluentDialog):
+    """Interactive dashboard dialog with real-time data visualization."""
+    
+    def __init__(self, db_manager, parent=None):
+        super().__init__("Loan Dashboard", parent)
+        self.db_manager = db_manager
+        self.dashboard_backend = DashboardBackend(db_manager)
+        self.setMinimumWidth(1000)
+        self.setMinimumHeight(700)
+        self.setup_ui()
+        
+    def setup_ui(self):
+        # Main layout with tabs
+        self.tab_widget = QTabWidget()
+        
+        # Create dashboard tabs
+        self.overview_tab = self.create_overview_tab()
+        self.portfolio_tab = self.create_portfolio_tab()
+        self.clients_tab = self.create_clients_tab()
+        self.forecast_tab = self.create_forecast_tab()
+        
+        # Add tabs to tab widget
+        self.tab_widget.addTab(self.overview_tab, "Overview")
+        self.tab_widget.addTab(self.portfolio_tab, "Portfolio")
+        self.tab_widget.addTab(self.clients_tab, "Clients")
+        self.tab_widget.addTab(self.forecast_tab, "Forecast")
+        
+        # Add tab widget to main layout
+        self.main_layout.insertWidget(0, self.tab_widget)
+        
+        # Add refresh and settings buttons
+        button_layout = QHBoxLayout()
+        
+        self.refresh_btn = QPushButton("Refresh Data")
+        self.refresh_btn.clicked.connect(self.refresh_data)
+        
+        self.auto_refresh_cb = QCheckBox("Auto-Refresh")
+        self.auto_refresh_cb.setChecked(True)
+        self.auto_refresh_cb.toggled.connect(self.toggle_auto_refresh)
+        
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.accept)
+        
+        button_layout.addWidget(self.refresh_btn)
+        button_layout.addWidget(self.auto_refresh_cb)
+        button_layout.addStretch()
+        button_layout.addWidget(self.close_btn)
+        
+        self.button_layout.addLayout(button_layout)
+        
+        # Start data loading
+        self.load_initial_data()
+        
+    def create_overview_tab(self):
+        """Create the overview dashboard tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Create a grid layout for metrics
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        
+        # Create metric cards
+        self.total_loans_card = self.create_metric_card("Total Loans", "0")
+        self.total_amount_card = self.create_metric_card("Total Amount", "€0.00")
+        self.avg_rate_card = self.create_metric_card("Avg. Rate", "0.00%")
+        self.total_interest_card = self.create_metric_card("Total Interest", "€0.00")
+        
+        # Add cards to grid
+        grid.addWidget(self.total_loans_card, 0, 0)
+        grid.addWidget(self.total_amount_card, 0, 1)
+        grid.addWidget(self.avg_rate_card, 1, 0)
+        grid.addWidget(self.total_interest_card, 1, 1)
+        
+        # Portfolio distribution chart
+        chart_group = QGroupBox("Portfolio Distribution")
+        chart_layout = QVBoxLayout(chart_group)
+        
+        self.portfolio_chart_view = QLabel("Loading chart...")
+        self.portfolio_chart_view.setAlignment(Qt.AlignCenter)
+        self.portfolio_chart_view.setMinimumHeight(250)
+        chart_layout.addWidget(self.portfolio_chart_view)
+        
+        # Add layouts to main tab layout
+        layout.addLayout(grid)
+        layout.addWidget(chart_group)
+        layout.addStretch()
+        
+        return tab
+        
+    def create_portfolio_tab(self):
+        """Create the portfolio analysis tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Portfolio metrics section
+        metrics_group = QGroupBox("Portfolio Metrics")
+        metrics_layout = QGridLayout(metrics_group)
+        
+        self.portfolio_metrics_labels = {}
+        metric_names = [
+            "Total Loan Count", "Total Loan Amount", "Average Loan Amount",
+            "Average Initial Rate", "Total Interest to be Paid", "Average Loan Term",
+            "French Amortization Count", "Italian Amortization Count"
+        ]
+        
+        for i, metric in enumerate(metric_names):
+            row, col = divmod(i, 2)
+            label = QLabel(f"<b>{metric}:</b>")
+            value = QLabel("Loading...")
+            value.setStyleSheet("color: #0078D4;")
+            
+            self.portfolio_metrics_labels[metric] = value
+            metrics_layout.addWidget(label, row, col*2)
+            metrics_layout.addWidget(value, row, col*2+1)
+        
+        # Portfolio chart section
+        chart_group = QGroupBox("Portfolio Analysis")
+        chart_layout = QVBoxLayout(chart_group)
+        
+        self.portfolio_detail_chart = QLabel("Generating detailed analysis...")
+        self.portfolio_detail_chart.setAlignment(Qt.AlignCenter)
+        self.portfolio_detail_chart.setMinimumHeight(300)
+        chart_layout.addWidget(self.portfolio_detail_chart)
+        
+        # Add to main layout
+        layout.addWidget(metrics_group)
+        layout.addWidget(chart_group)
+        
+        return tab
+        
+    def create_clients_tab(self):
+        """Create the clients analysis tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Client metrics section
+        metrics_group = QGroupBox("Client Metrics")
+        metrics_layout = QGridLayout(metrics_group)
+        
+        self.client_metrics_labels = {}
+        metric_names = [
+            "Total Clients", "Active Clients", "New Clients (30 days)", "Average Credit Score", "Average Income",
+            "Client Interactions"
+        ]
+        
+        for i, metric in enumerate(metric_names):
+            row, col = divmod(i, 2)
+            label = QLabel(f"<b>{metric}:</b>")
+            value = QLabel("Loading...")
+            value.setStyleSheet("color: #0078D4;")
+            
+            self.client_metrics_labels[metric] = value
+            metrics_layout.addWidget(label, row, col*2)
+            metrics_layout.addWidget(value, row, col*2+1)
+        
+        # Client segmentation chart
+        segmentation_group = QGroupBox("Client Segmentation")
+        segmentation_layout = QVBoxLayout(segmentation_group)
+        
+        # Add segmentation type selector
+        selector_layout = QHBoxLayout()
+        selector_label = QLabel("<b>Segmentation Type:</b>")
+        self.segmentation_type_combo = QComboBox()
+        self.segmentation_type_combo.addItems([
+            "Income Distribution", 
+            "Geographical Distribution", 
+            "Credit Score Distribution",
+            "Client Clusters"
+        ])
+        self.segmentation_type_combo.currentIndexChanged.connect(self.on_segmentation_type_changed)
+        
+        selector_layout.addWidget(selector_label)
+        selector_layout.addWidget(self.segmentation_type_combo)
+        selector_layout.addStretch()
+        segmentation_layout.addLayout(selector_layout)
+        
+        # Add map detail level selector (initially hidden)
+        self.map_detail_layout = QHBoxLayout()
+        detail_label = QLabel("<b>Map Detail Level:</b>")
+        self.map_detail_combo = QComboBox()
+        self.map_detail_combo.addItems(["Province", "Commune"])
+        self.map_detail_combo.currentIndexChanged.connect(self.on_map_detail_changed)
+        
+        self.map_detail_layout.addWidget(detail_label)
+        self.map_detail_layout.addWidget(self.map_detail_combo)
+        self.map_detail_layout.addStretch()
+        segmentation_layout.addLayout(self.map_detail_layout)
+        
+        # Hide the map detail selector initially
+        self.toggle_map_detail_visibility(False)
+        
+        # Add interactive map checkbox (visible only for geographical distribution)
+        self.interactive_layout = QHBoxLayout()
+        interactive_label = QLabel("<b>Map Options:</b>")
+        self.interactive_map_cb = QCheckBox("Use Interactive Map")
+        self.interactive_map_cb.setChecked(True)
+        self.interactive_map_cb.toggled.connect(self.on_interactive_map_toggled)
+        
+        self.interactive_layout.addWidget(interactive_label)
+        self.interactive_layout.addWidget(self.interactive_map_cb)
+        self.interactive_layout.addStretch()
+        segmentation_layout.addLayout(self.interactive_layout)
+        
+        # Hide the interactive map option initially (shown only for geographical maps)
+        self.toggle_interactive_visibility(False)
+        
+        # Segmentation chart container (using a QStackedWidget to switch between image/interactive)
+        self.client_segment_container = QStackedWidget()
+        self.client_segment_container.setMinimumHeight(400)
+
+
+        
+        # Add label for static images
+        self.client_segment_chart = QLabel("Analyzing client segments...")
+        self.client_segment_chart.setAlignment(Qt.AlignCenter)
+        self.client_segment_container.addWidget(self.client_segment_chart)
+        
+
+        self.client_segment_web = QWebEngineView()
+        self.client_segment_web.setMinimumHeight(400)
+        self.client_segment_container.addWidget(self.client_segment_web)
+
+        self.client_segment_web.loadFinished.connect(self._on_map_loaded)
+        self.client_segment_container.addWidget(self.client_segment_web)
+        # Add the container to the layout
+        segmentation_layout.addWidget(self.client_segment_container)
+        
+        # Add to main layout
+        layout.addWidget(metrics_group)
+        layout.addWidget(segmentation_group)
+        
+        return tab
+        
+    # Poi aggiungi questo metodo alla classe DashboardDialog
+    def _on_map_loaded(self, success):
+        """Handle map loading completion"""
+        if success:
+            # Forza il ridimensionamento della mappa dopo il caricamento
+            self.client_segment_web.page().runJavaScript(
+                "if (typeof map !== 'undefined') { map.invalidateSize(true); }")
+        else:
+            print("Errore: Mappa non caricata correttamente")
+
+    def create_forecast_tab(self):
+        """Create the forecasting tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Euribor forecast section
+        forecast_group = QGroupBox("Interest Rate Forecast")
+        forecast_layout = QVBoxLayout(forecast_group)
+        
+        # Forecast chart
+        self.forecast_chart = QLabel("Generating forecast...")
+        self.forecast_chart.setAlignment(Qt.AlignCenter)
+        self.forecast_chart.setMinimumHeight(400)
+        forecast_layout.addWidget(self.forecast_chart)
+        
+        # Forecast stats
+        stats_layout = QGridLayout()
+        
+        self.forecast_stats_labels = {}
+        stat_names = [
+            "Current Rate", "Trend Direction", "30-Day Forecast", 
+            "90-Day Forecast", "Historical Average", "Historical Min", "Historical Max"
+        ]
+        
+        for i, stat in enumerate(stat_names):
+            row, col = divmod(i, 2)
+            label = QLabel(f"<b>{stat}:</b>")
+            value = QLabel("Calculating...")
+            value.setStyleSheet("color: #0078D4;")
+            
+            self.forecast_stats_labels[stat] = value
+            stats_layout.addWidget(label, row, col*2)
+            stats_layout.addWidget(value, row, col*2+1)
+        
+        forecast_layout.addLayout(stats_layout)
+        
+        # Add to main layout
+        layout.addWidget(forecast_group)
+        
+        return tab
+        
+    def create_metric_card(self, title, value):
+        """Create a styled metric card widget."""
+        card = QWidget()
+        card.setObjectName("metricCard")
+        card.setStyleSheet("""
+            #metricCard {
+                background-color: #ffffff;
+                border-radius: 8px;
+                border: 1px solid #e0e0e0;
+            }
+        """)
+        
+        layout = QVBoxLayout(card)
+        layout.setSpacing(5)
+        
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 14px; color: #666666;")
+        
+        value_label = QLabel(value)
+        value_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #0078D4;")
+        value_label.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(title_label)
+        layout.addWidget(value_label)
+        
+        # Store the value label to update it later
+        card.value_label = value_label
+        
+        return card
+        
+    def load_initial_data(self):
+        """Load initial dashboard data."""
+        # Start with priority data
+        self.refresh_data(priority_only=True)
+        
+        # Start auto-refresh if enabled
+        if self.auto_refresh_cb.isChecked():
+            self.dashboard_backend.register_update_callback(self.update_dashboard)
+            self.dashboard_backend.start_auto_refresh(interval=30)  # 30 second refresh
+        
+    def refresh_data(self, priority_only=False):
+        """Refresh dashboard data."""
+        # Show loading indicators
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText("Loading...")
+        
+        # Use a separate thread to fetch data
+        import threading
+        threading.Thread(target=self._fetch_data, 
+                         args=(priority_only,), 
+                         daemon=True).start()
+    
+    def _fetch_data(self, priority_only):
+        """Fetch data in a separate thread."""
+        try:
+            data = self.dashboard_backend.refresh_dashboard(force=True, priority_only=priority_only)
+            # Use Qt's signal-slot to safely update UI from another thread
+            from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+            QMetaObject.invokeMethod(self, "update_dashboard", 
+                                     Qt.QueuedConnection,
+                                     Q_ARG(str, data))
+        except Exception as e:
+            print(f"Error fetching dashboard data: {e}")
+            # Update UI to show error
+            from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+            error_data = json.dumps({"error": str(e), "is_error": True})
+            QMetaObject.invokeMethod(self, "update_dashboard", 
+                                     Qt.QueuedConnection,
+                                     Q_ARG(str, error_data))
+
+    def toggle_map_detail_visibility(self, visible):
+        """Show or hide the map detail level selector."""
+        for i in range(self.map_detail_layout.count()):
+            item = self.map_detail_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().setVisible(visible)
+
+    def on_segmentation_type_changed(self, index):
+        """Handle segmentation type selection change."""
+        if not hasattr(self, 'cached_segmentation_data'):
+            return  # No data available yet
+        
+        segmentation_type = self.segmentation_type_combo.currentText()
+        
+        # Show/hide map detail selector and interactive option based on segmentation type
+        is_geo = segmentation_type == "Geographical Distribution"
+        self.toggle_map_detail_visibility(is_geo)
+        self.toggle_interactive_visibility(is_geo)
+        
+        self.update_segmentation_chart(self.cached_segmentation_data, segmentation_type)
+
+    def on_map_detail_changed(self, index):
+        """Handle map detail level selection change."""
+        if not hasattr(self, 'cached_segmentation_data'):
+            return  # No data available yet
+            
+        segmentation_type = self.segmentation_type_combo.currentText()
+        if segmentation_type == "Geographical Distribution":
+            self.update_segmentation_chart(self.cached_segmentation_data, segmentation_type)
+
+    def toggle_interactive_visibility(self, visible):
+        """Show or hide the interactive map option."""
+        for i in range(self.interactive_layout.count()):
+            item = self.interactive_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().setVisible(visible)
+
+    def on_interactive_map_toggled(self, checked):
+        """Handle interactive map toggle."""
+        if hasattr(self, 'cached_segmentation_data'):
+            segmentation_type = self.segmentation_type_combo.currentText()
+            if segmentation_type == "Geographical Distribution":
+                self.update_segmentation_chart(self.cached_segmentation_data, segmentation_type)
+
+        
+    @pyqtSlot(str)
+    def update_dashboard(self, json_data):
+        """Update dashboard with new data."""
+        try:
+            data = json.loads(json_data)
+            
+            # Check for errors
+            if data.get("is_error", False):
+                self.show_error(data.get("error", "Unknown error"))
+                return
+                
+            # Update overview metrics
+            loan_metrics = data.get("loan_metrics", {})
+            if loan_metrics and not loan_metrics.get("is_error", False):
+                self.total_loans_card.value_label.setText(str(loan_metrics.get("Total Loan Count", 0)))
+                self.total_amount_card.value_label.setText(f"€{loan_metrics.get('Total Loan Amount', 0):,.2f}")
+                self.avg_rate_card.value_label.setText(f"{loan_metrics.get('Average Initial Rate', 0):.2f}%")
+                self.total_interest_card.value_label.setText(f"€{loan_metrics.get('Total Interest to be Paid', 0):,.2f}")
+                
+                # Update portfolio metrics
+                for metric, label in self.portfolio_metrics_labels.items():
+                    if metric in loan_metrics:
+                        value = loan_metrics[metric]
+                        if isinstance(value, float):
+                            if "Rate" in metric:
+                                label.setText(f"{value:.2f}%")
+                            else:
+                                label.setText(f"€{value:,.2f}" if value >= 1000 else f"€{value:.2f}")
+                        else:
+                            label.setText(str(value))
+            
+            # Update CRM metrics
+            crm_metrics = data.get("crm_metrics", {})
+            if crm_metrics and not crm_metrics.get("is_error", False):
+                if "Total Clients" in self.client_metrics_labels:
+                    self.client_metrics_labels["Total Clients"].setText(str(crm_metrics.get("total_clients", 0)))
+                if "Client Interactions" in self.client_metrics_labels:
+                    self.client_metrics_labels["Client Interactions"].setText(str(crm_metrics.get("total_interactions", 0)))
+                if "New Clients (30 days)" in self.client_metrics_labels:
+                    self.client_metrics_labels["New Clients (30 days)"].setText(str(crm_metrics.get("new_clients_last_30_days", 0)))
+                if "Active Clients" in self.client_metrics_labels:
+                    self.client_metrics_labels["Active Clients"].setText(str(crm_metrics.get("active_clients", 0)))
+            
+            # Update client segmentation data
+            segmentation = data.get("client_segmentation", {})
+            if segmentation and not segmentation.get("is_error", False):
+                # Store the complete segmentation data for filtering
+                self.cached_segmentation_data = segmentation
+                
+                # Update the chart with the currently selected segmentation type
+                current_type = self.segmentation_type_combo.currentText()
+                self.update_segmentation_chart(segmentation, current_type)
+                
+                # Update average metrics
+                if "cluster_profiles" in segmentation:
+                    profiles = segmentation["cluster_profiles"]
+                    if profiles:
+                        avg_credit = 0
+                        avg_income = 0
+                        total_clients = 0
+                        
+                        for profile in profiles.values():
+                            if "count" in profile:
+                                count = profile["count"]
+                                total_clients += count
+                                if "avg_credit_score" in profile and profile["avg_credit_score"] != "N/A":
+                                    avg_credit += profile["avg_credit_score"] * count
+                                if "avg_income" in profile and profile["avg_income"] != "N/A":
+                                    avg_income += profile["avg_income"] * count
+                        
+                        if total_clients > 0:
+                            if "Average Credit Score" in self.client_metrics_labels:
+                                self.client_metrics_labels["Average Credit Score"].setText(f"{avg_credit/total_clients:.1f}")
+                            if "Average Income" in self.client_metrics_labels:
+                                self.client_metrics_labels["Average Income"].setText(f"€{avg_income/total_clients:,.2f}")
+            
+            # Update forecast data
+            forecast_data = data.get("forecasting_data", {})
+            if forecast_data and not forecast_data.get("is_error", False) and "OBS_VALUE" in forecast_data:
+                # Generate forecast chart
+                try:
+                    # Get the last 24 months of data
+                    if "TIME_PERIOD" in forecast_data and len(forecast_data["TIME_PERIOD"]) >= 24:
+                        time_periods = forecast_data["TIME_PERIOD"][-24:]
+                        values = forecast_data["OBS_VALUE"][-24:]
+                        
+                        # Create a dictionary for chart
+                        chart_data = {}
+                        for i, period in enumerate(time_periods):
+                            chart_data[period] = values[i]
+                        
+                        # Get chart image from backend
+                        forecast_chart_data = self.dashboard_backend.dashboard_data.get_chart_image(
+                            chart_data, "Euribor Rate Trend (24 Months)", "line")
+                        if forecast_chart_data:
+                            self.forecast_chart.setText("")
+                            self.forecast_chart.setPixmap(self.base64_to_pixmap(forecast_chart_data))
+                        
+                        # Update forecast stats
+                        if "Current Rate" in self.forecast_stats_labels:
+                            self.forecast_stats_labels["Current Rate"].setText(f"{values[-1]:.3f}%")
+                        
+                        if "Trend Direction" in self.forecast_stats_labels:
+                            if len(values) >= 2:
+                                trend = "↑ Rising" if values[-1] > values[-2] else "↓ Falling" if values[-1] < values[-2] else "→ Stable"
+                                self.forecast_stats_labels["Trend Direction"].setText(trend)
+                        
+                        if "Historical Average" in self.forecast_stats_labels:
+                            avg = sum(values) / len(values)
+                            self.forecast_stats_labels["Historical Average"].setText(f"{avg:.3f}%")
+                        
+                        if "Historical Min" in self.forecast_stats_labels:
+                            self.forecast_stats_labels["Historical Min"].setText(f"{min(values):.3f}%")
+                        
+                        if "Historical Max" in self.forecast_stats_labels:
+                            self.forecast_stats_labels["Historical Max"].setText(f"{max(values):.3f}%")
+                except Exception as e:
+                    print(f"Error generating forecast chart: {e}")
+            
+            # Update portfolio chart
+            if "portfolio_chart" in data and data["portfolio_chart"]:
+                self.portfolio_chart_view.setText("")
+                self.portfolio_chart_view.setPixmap(self.base64_to_pixmap(data["portfolio_chart"]))
+            
+            # Portfolio composition chart for portfolio tab
+            if loan_metrics and not loan_metrics.get("is_error", False):
+                try:
+                    if loan_metrics.get("French Amortization Count", 0) > 0 or loan_metrics.get("Italian Amortization Count", 0) > 0:
+                        amort_data = {
+                            "French": loan_metrics.get("French Amortization Count", 0),
+                            "Italian": loan_metrics.get("Italian Amortization Count", 0)
+                        }
+                        # Get chart image from backend
+                        amort_chart_data = self.dashboard_backend.dashboard_data.get_chart_image(
+                            amort_data, "Amortization Type Distribution", "pie")
+                        if amort_chart_data:
+                            self.portfolio_detail_chart.setText("")
+                            self.portfolio_detail_chart.setPixmap(self.base64_to_pixmap(amort_chart_data))
+                except Exception as e:
+                    print(f"Error generating portfolio detail chart: {e}")
+        
+        except Exception as e:
+            self.show_error(f"Error updating dashboard: {str(e)}")
+        finally:
+            # Re-enable refresh button
+            self.refresh_btn.setEnabled(True)
+            self.refresh_btn.setText("Refresh Data")
+                
+    def base64_to_pixmap(self, base64_data):
+        """Convert base64 image data to QPixmap with improved error handling."""
+        from PyQt5.QtGui import QPixmap, QImage
+        import base64
+        
+        if not base64_data:
+            return QPixmap()
+            
+        try:
+            # Decode base64 data
+            image_data = base64.b64decode(base64_data)
+            
+            # Create QImage from decoded data
+            image = QImage()
+            success = image.loadFromData(image_data)
+            
+            if not success or image.isNull():
+                print("Failed to create valid QImage from data")
+                return QPixmap()
+                
+            # Create QPixmap from QImage
+            pixmap = QPixmap.fromImage(image)
+            
+            if pixmap.isNull():
+                print("Created pixmap is null")
+                return QPixmap()
+                
+            return pixmap
+        except Exception as e:
+            import traceback
+            print(f"Error converting base64 to pixmap: {e}")
+            print(traceback.format_exc())
+            return QPixmap()
+    
+    def show_error(self, message):
+        """Display error message in the dashboard."""
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.warning(self, "Dashboard Error", message)
+
+                
+    def update_segmentation_chart(self, segmentation_data, segmentation_type):
+        """Update the segmentation chart based on selected type with improved handling."""
+        try:
+            if not segmentation_data or segmentation_data.get("is_error", False):
+                self.client_segment_chart.setText("No segmentation data available")
+                self.client_segment_container.setCurrentIndex(0)  # Switch to label
+                return
+                    
+            chart_data = None
+            chart_title = "Client Segmentation"
+            
+            # Get data based on segmentation type
+            if segmentation_type == "Income Distribution" and "income_segments" in segmentation_data:
+                chart_data = segmentation_data["income_segments"]
+                chart_title = "Client Income Distribution"
+            elif segmentation_type == "Geographical Distribution" and "geographical_segments" in segmentation_data:
+                chart_data = segmentation_data["geographical_segments"]
+                chart_title = "Client Geographical Distribution by Province"
+                # Change title based on detail level
+                if hasattr(self, 'map_detail_combo') and self.map_detail_combo.currentText() == "Commune":
+                    chart_title = "Client Geographical Distribution by Municipality"
+            elif segmentation_type == "Credit Score Distribution" and "credit_score_segments" in segmentation_data:
+                chart_data = segmentation_data["credit_score_segments"]
+                chart_title = "Client Credit Score Distribution"
+            elif segmentation_type == "Client Clusters" and "cluster_profiles" in segmentation_data:
+                # For clusters, we need to extract counts from profiles
+                clusters = segmentation_data["cluster_profiles"]
+                if clusters and isinstance(clusters, dict):
+                    chart_data = {name: profile.get("count", 0) for name, profile in clusters.items()}
+                    chart_title = "Client Clusters Distribution"
+            
+            # Generate chart if we have data
+            if chart_data:
+                # Get chart type based on data
+                chart_type = "map" if segmentation_type == "Geographical Distribution" else "pie"
+                if segmentation_type != "Geographical Distribution" and len(chart_data) > 7:
+                    chart_type = "bar"  # Use bar for many categories
+                    
+                # Pass detail level if it's a map
+                extra_params = {}
+                if chart_type == "map" and hasattr(self, 'map_detail_combo'):
+                    extra_params["map_detail"] = self.map_detail_combo.currentText().lower()
+                    
+                # Set interactive parameter for maps
+                use_interactive = False
+                if chart_type == "map" and hasattr(self, 'interactive_map_cb'):
+                    use_interactive = self.interactive_map_cb.isChecked()
+                    extra_params["interactive"] = use_interactive
+                
+                # Show loading indicator
+                if use_interactive:
+                    self.client_segment_chart.setText("Loading interactive map...")
+                else:
+                    self.client_segment_chart.setText("Generating chart...")
+                    
+                # Ensure the UI updates immediately
+                from PyQt5.QtCore import QCoreApplication
+                QCoreApplication.processEvents()
+                
+                # Get chart image or HTML content from backend
+                chart_image_data = self.dashboard_backend.dashboard_data.get_chart_image(
+                    chart_data, chart_title, chart_type, **extra_params)
+                    
+                if chart_image_data:
+                    # Handle HTML content for interactive maps
+                    if isinstance(chart_image_data, str) and chart_image_data.startswith("html:"):
+                        # Extract HTML content
+                        html_content = chart_image_data[5:]  # Remove "html:" prefix
+                        
+                        # Configure QWebEngineView for optimal map display
+                        from PyQt5.QtWebEngineWidgets import QWebEngineSettings
+                        
+                        # Enable required settings for interactive maps
+                        self.client_segment_web.settings().setAttribute(
+                            QWebEngineSettings.JavascriptEnabled, True)
+                        self.client_segment_web.settings().setAttribute(
+                            QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
+                        self.client_segment_web.settings().setAttribute(
+                            QWebEngineSettings.ScrollAnimatorEnabled, True)
+                        self.client_segment_web.settings().setAttribute(
+                            QWebEngineSettings.WebGLEnabled, True)
+                        self.client_segment_web.settings().setAttribute(
+                            QWebEngineSettings.Accelerated2dCanvasEnabled, True)  # Correzione del nome
+
+                        self.client_segment_web.settings().setAttribute(
+                            QWebEngineSettings.AutoLoadImages, True)
+                        self.client_segment_web.settings().setAttribute(
+                            QWebEngineSettings.TouchIconsEnabled, True)
+                        
+                        # Aggiungo queste nuove impostazioni per migliorare la compatibilità
+                        self.client_segment_web.settings().setAttribute(QWebEngineSettings.PluginsEnabled, True)
+                        self.client_segment_web.settings().setAttribute(QWebEngineSettings.AllowRunningInsecureContent, True)
+                        self.client_segment_web.settings().setAttribute(QWebEngineSettings.FocusOnNavigationEnabled, False)
+                        # Crea un file temporaneo e caricalo direttamente
+                        import tempfile
+
+                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.html')
+                        temp_file.write(html_content.encode('utf-8'))
+                        temp_file_path = temp_file.name
+                        temp_file.close()
+
+                        # Carica il file usando QUrl
+                        self.client_segment_web.load(QUrl.fromLocalFile(temp_file_path))
+                        self.client_segment_container.setCurrentIndex(1)       
+                        
+                        # Switch to web view
+                        self.client_segment_container.setCurrentIndex(1)
+                    else:
+                        # Regular base64 image
+                        self.client_segment_chart.setText("")
+                        pixmap = self.base64_to_pixmap(chart_image_data)
+                        if pixmap and not pixmap.isNull():
+                            self.client_segment_chart.setPixmap(pixmap)
+                        else:
+                            self.client_segment_chart.setText("Error rendering chart image")
+                        self.client_segment_container.setCurrentIndex(0)  # Switch to label
+                else:
+                    self.client_segment_chart.setText("Unable to generate chart")
+                    self.client_segment_container.setCurrentIndex(0)  # Switch to label
+            else:
+                self.client_segment_chart.setText(f"No data available for {segmentation_type}")
+                self.client_segment_container.setCurrentIndex(0)  # Switch to label
+                    
+        except Exception as e:
+            import traceback
+            print(f"Error updating segmentation chart: {e}")
+            print(traceback.format_exc())
+            self.client_segment_chart.setText(f"Error generating chart: {str(e)}")
+            self.client_segment_container.setCurrentIndex(0)  # Switch to label
+                        
+                            
+    # Nel metodo toggle_auto_refresh della classe DashboardDialog
+
+    def toggle_auto_refresh(self, enabled):
+        """Toggle automatic data refresh."""
+        if enabled:
+            # Registra il callback
+            self.dashboard_backend.register_update_callback(self.update_dashboard)
+            
+            # Avvia il refresh con l'intervallo specificato direttamente
+            # (funzione modificata per operare nel thread principale)
+            self.dashboard_backend.start_auto_refresh(interval=30)  # 30 secondi
+        else:
+            self.dashboard_backend.stop_auto_refresh()
+            self.dashboard_backend.unregister_update_callback(self.update_dashboard)
+            
+    def closeEvent(self, event):
+        """Handle dialog close event."""
+        # Stop auto-refresh when closing
+        self.dashboard_backend.stop_auto_refresh()
+        self.dashboard_backend.unregister_update_callback(self.update_dashboard)
+        super().closeEvent(event)
+
+
+
 class LoanApp(QMainWindow):
     def __init__(self, db_manager):
         super().__init__()
@@ -3583,6 +4327,11 @@ class LoanApp(QMainWindow):
         reports_button.setIcon(QIcon(resource_path("report.png")))
         reports_button.clicked.connect(self.open_reports)
         self.sidebar.add_widget(reports_button)
+
+        dashboard_button = QPushButton("Dashboard")
+        dashboard_button.setIcon(QIcon(resource_path("dashboard.png")))
+        dashboard_button.clicked.connect(self.open_dashboard)
+        self.sidebar.add_widget(dashboard_button)
         
         # Inizialmente nascondi il widget CRM
         self.crm_widget.hide()
@@ -4072,6 +4821,11 @@ class LoanApp(QMainWindow):
         dialog = ProbabilisticPricingDialog(self.selected_loan, self)
         dialog.exec_()
 
+
+    def open_dashboard(self):
+        """Open the loan dashboard dialog."""
+        dashboard = DashboardDialog(self.db_manager, self)
+        dashboard.exec_()
 
     def open_ai_assistant(self):
         """Opens the AI assistant dialog"""
