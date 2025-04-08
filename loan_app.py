@@ -4,10 +4,10 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
                              QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QStackedWidget, QAction, QTabWidget, QFrame, QGridLayout, QDateEdit, QCheckBox, QFileDialog, QGroupBox, QProgressDialog, QProgressBar)
+                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QStatusBar, QAction, QTabWidget, QFrame, QStackedWidget, QGridLayout, QDateEdit, QCheckBox, QFileDialog, QGroupBox, QProgressDialog, QProgressBar)
 
 
-from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen
+from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate, QThread, pyqtSignal, pyqtSlot, QObject, QUrl
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
 from PyQt5.QtWebChannel import QWebChannel
@@ -34,6 +34,9 @@ from ai_chatbot_loan import Chatbot
 from loan_crm import LoanCRM
 from loan_report import LoanReport
 from loan_dashboard import DashboardBackend
+from task_manager_loan import TaskManager
+# Add to existing imports section
+
 
 def resource_path(relative_path):
     """Ottiene il percorso assoluto delle risorse, sia in modalità development che in eseguibile"""
@@ -85,34 +88,15 @@ class FluentStylesheet:
                 background-color: #ffffff;
             }
             
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 10px 20px;
-                font-size: 11pt;
-                min-width: 60px;
-            }
-            
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-            
-            QPushButton:pressed {
-                background-color: #005a9e;
-            }
-            
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
              
             QPushButton {
-                background-color: #0078d4;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                                stop:0 #3fa9f5, stop:1 #0078d4);
                 color: white;
                 border: none;
-                border-radius: 12px;
-                padding: 10px 20px;
+                border-radius: 20px;
+                padding: 12px 24px;
+
                 font-size: 11pt;
                 min-width: 60px;
             }
@@ -132,8 +116,8 @@ class FluentStylesheet:
 
             QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
                 border: 1px solid #d0d0d0;
-                border-radius: 12px;
-                padding: 6px 12px;
+                border-radius: 20px;
+                padding: 8px 20px;
                 background-color: #ffffff;
             }
             
@@ -344,6 +328,10 @@ class ThemeManager:
     def get_current_theme(self):
         """Restituisce il nome del tema corrente"""
         return self.current_theme
+
+    def is_dark_mode(self):
+        """Verifica se il tema corrente è dark mode"""
+        return self.current_theme == "dark"
 
     def apply_theme_to_widget(self, widget, widget_type):
         """Applica stili specifici per tipo di widget"""
@@ -1906,6 +1894,8 @@ class SidebarWidget(QWidget):
         self.start_x = 0
         self.start_width = 0
         self.expanded_width = 250  # Larghezza quando espanso
+        self.min_width = 50       # Larghezza minima
+        self.max_width = 500      # Larghezza massima
         self.init_ui()
 
     def init_ui(self):
@@ -1924,7 +1914,7 @@ class SidebarWidget(QWidget):
         self.toggle_button = QPushButton()
         self.toggle_button.setFixedSize(32, 32)
         self.toggle_button.clicked.connect(self.toggle_sidebar)
-        self.toggle_button.setCursor(Qt.PointingHandCursor)  # Cambia il cursore per un feedback migliore
+        self.toggle_button.setCursor(Qt.PointingHandCursor)
         
         # Stile per il menu hamburger
         self.toggle_button.setStyleSheet("""
@@ -1956,7 +1946,7 @@ class SidebarWidget(QWidget):
         # Crea il resize handle (maniglia di ridimensionamento)
         self.resize_handle = QFrame(self)
         self.resize_handle.setFrameShape(QFrame.VLine)
-        self.resize_handle.setFrameShadow(QFrame.Sunken)
+        self.resize_handle.setFrameShadow(QFrame.Raised)  # Usa Raised invece di Sunken per maggiore visibilità
         self.resize_handle.setCursor(Qt.SizeHorCursor)
         self.resize_handle.setFixedWidth(4)
         self.resize_handle.setStyleSheet("""
@@ -1965,17 +1955,21 @@ class SidebarWidget(QWidget):
                 border: none;
             }
             QFrame:hover {
-                background-color: rgba(0, 120, 212, 0.3);
+                background-color: rgba(0, 120, 212, 0.5);
             }
         """)
         
-        # Posiziona il resize handle sul bordo destro
-        self.resize_handle.setGeometry(self.width() - 4, 0, 4, self.height())
-        
         # Stile iniziale
-        self.setMinimumWidth(50)  # Larghezza minima quando collassato
-        self.setMaximumWidth(500)  # Imposta una larghezza massima ragionevole
-        self.setFixedWidth(self.expanded_width)  # Larghezza iniziale
+        self.setMinimumWidth(self.min_width)
+        self.setMaximumWidth(self.max_width)
+        self.setFixedWidth(self.expanded_width)
+        
+        # Mostra il resize handle e configura gli attributi per il QSS
+        self.resize_handle.raise_()
+        self.resize_handle.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.resize_handle.setMouseTracking(True)
+        
+        # Inizialmente posiziona il resize handle
         self.update_style()
     
     def update_hamburger_icon(self):
@@ -2018,9 +2012,9 @@ class SidebarWidget(QWidget):
     def toggle_sidebar(self):
         """Espandi/collassa la sidebar."""
         self.collapsed = not self.collapsed
-        target_width = 50 if self.collapsed else self.expanded_width
+        target_width = self.min_width if self.collapsed else self.expanded_width
         
-        # Aggiorna l'icona invece di cambiare il testo
+        # Aggiorna l'icona
         self.update_hamburger_icon()
         
         # Animazione di transizione
@@ -2031,7 +2025,7 @@ class SidebarWidget(QWidget):
         self.animation.start()
         
         # Imposta anche la larghezza massima durante l'animazione
-        self.setFixedWidth(target_width)
+        self.setMaximumWidth(target_width)
         
         # Nascondi/mostra il contenuto durante l'animazione
         self.content_widget.setVisible(not self.collapsed)
@@ -2055,6 +2049,17 @@ class SidebarWidget(QWidget):
                         background-color: #f0f0f0;
                     }
                 """)
+                
+                # Stile specifico per il resize handle in tema chiaro
+                self.resize_handle.setStyleSheet("""
+                    QFrame {
+                        background-color: transparent;
+                        border: none;
+                    }
+                    QFrame:hover {
+                        background-color: rgba(0, 120, 212, 0.3);
+                    }
+                """)
             else:
                 self.setStyleSheet("""
                     QWidget {
@@ -2071,6 +2076,17 @@ class SidebarWidget(QWidget):
                         background-color: #555555;
                     }
                 """)
+                
+                # Stile specifico per il resize handle in tema scuro
+                self.resize_handle.setStyleSheet("""
+                    QFrame {
+                        background-color: transparent;
+                        border: none;
+                    }
+                    QFrame:hover {
+                        background-color: rgba(30, 144, 255, 0.4);
+                    }
+                """)
             
             # Aggiorna anche l'icona perché potrebbe essere cambiato il tema
             self.update_hamburger_icon()
@@ -2079,8 +2095,7 @@ class SidebarWidget(QWidget):
         """Gestisce il ridimensionamento del widget."""
         super().resizeEvent(event)
         # Aggiorna la posizione del resize handle
-        if self.resize_handle:
-            self.resize_handle.setGeometry(self.width() - 4, 0, 4, self.height())
+        self.resize_handle.setGeometry(self.width() - 4, 0, 4, self.height())
     
     def mousePressEvent(self, event):
         """Gestisce l'evento di pressione del mouse."""
@@ -2088,6 +2103,7 @@ class SidebarWidget(QWidget):
             self.is_resizing = True
             self.start_x = event.globalX()
             self.start_width = self.width()
+            self.setCursor(Qt.SizeHorCursor)
             event.accept()
         else:
             super().mousePressEvent(event)
@@ -2097,39 +2113,88 @@ class SidebarWidget(QWidget):
         if self.is_resizing:
             # Calcola la nuova larghezza
             delta = event.globalX() - self.start_x
-            new_width = max(self.minimumWidth(), min(self.start_width + delta, self.maximumWidth()))
+            new_width = max(self.min_width, min(self.start_width + delta, self.max_width))
             
-            # Se non è collassato, aggiorna la larghezza quando espanso
-            if not self.collapsed and new_width > 50:
+            # Rileva il collasso automatico se si trascina molto vicino alla larghezza minima
+            if new_width < self.min_width + 20 and not self.collapsed:
+                self.collapsed = True
+                self.content_widget.setVisible(False)
+                self.update_hamburger_icon()
+                new_width = self.min_width
+            # Rileva l'espansione automatica se si trascina oltre la larghezza minima
+            elif new_width >= self.min_width + 30 and self.collapsed:
+                self.collapsed = False
+                self.content_widget.setVisible(True)
+                self.update_hamburger_icon()
+            
+            # Se non è collassato, aggiorna la larghezza espansa
+            if not self.collapsed and new_width > self.min_width:
                 self.expanded_width = new_width
             
-            # Imposta la nuova larghezza
+            # Imposta la nuova larghezza con vincoli min/max
             self.setFixedWidth(new_width)
+            self.setMinimumWidth(self.min_width)
+            self.setMaximumWidth(self.max_width if not self.collapsed else self.min_width)
+            
+            # Assicurati che il resize handle rimanga nella posizione corretta
+            self.resize_handle.setGeometry(self.width() - 4, 0, 4, self.height())
+            
             event.accept()
         else:
+            # Evidenzia il resize handle quando il mouse ci passa sopra
+            if abs(event.pos().x() - self.width()) < 5:
+                self.setCursor(Qt.SizeHorCursor)
+                self.resize_handle.setStyleSheet(self.resize_handle.styleSheet().replace(
+                    "background-color: transparent", 
+                    "background-color: rgba(0, 120, 212, 0.3)"
+                ))
+            else:
+                self.setCursor(Qt.ArrowCursor)
+                self.resize_handle.setStyleSheet(self.resize_handle.styleSheet().replace(
+                    "background-color: rgba(0, 120, 212, 0.3)", 
+                    "background-color: transparent"
+                ))
             super().mouseMoveEvent(event)
     
     def mouseReleaseEvent(self, event):
         """Gestisce l'evento di rilascio del mouse."""
         if self.is_resizing:
             self.is_resizing = False
+            self.setCursor(Qt.ArrowCursor)
             
-            # Se la larghezza è molto piccola, considera collassato
-            if self.width() < 60:
-                self.collapsed = True
-                self.setFixedWidth(50)
-                self.content_widget.setVisible(False)
-                self.update_hamburger_icon()
-            # Se è stato espanso da collassato, aggiorna lo stato
-            elif self.collapsed and self.width() > 50:
-                self.collapsed = False
-                self.content_widget.setVisible(True)
-                self.update_hamburger_icon()
+            # Termina il ridimensionamento con una larghezza logica
+            current_width = self.width()
             
+            # Aggiungi snap per larghezza espansa predefinita
+            if abs(current_width - 250) < 20:  # Snap alla larghezza predefinita
+                self.setFixedWidth(250)
+                self.expanded_width = 250
+                
             event.accept()
         else:
             super().mouseReleaseEvent(event)
-
+    
+    def enterEvent(self, event):
+        """Gestisce l'evento di ingresso del mouse nel widget."""
+        # Migliora visibilità del resize handle quando il mouse entra nel widget
+        if not self.collapsed:
+            self.resize_handle.setStyleSheet(self.resize_handle.styleSheet().replace(
+                "background-color: transparent", 
+                "background-color: rgba(0, 120, 212, 0.1)"
+            ))
+        super().enterEvent(event)
+    
+    def leaveEvent(self, event):
+        """Gestisce l'evento di uscita del mouse dal widget."""
+        # Ripristina la trasparenza del resize handle quando il mouse esce
+        if not self.is_resizing:
+            self.resize_handle.setStyleSheet(self.resize_handle.styleSheet().replace(
+                "background-color: rgba(0, 120, 212, 0.1)", 
+                "background-color: transparent"
+            ))
+            self.setCursor(Qt.ArrowCursor)
+        super().leaveEvent(event)
+        
 class CRMWidget(QWidget):
     """Widget principale per la gestione del CRM."""
     def __init__(self, crm_manager, parent=None, theme_manager=None):
@@ -3529,8 +3594,6 @@ class AssignLoanDialog(FluentDialog):
                 f"Failed to assign loan: {str(e)}"
             )
 
-
-
 class DashboardDialog(FluentDialog):
     """Interactive dashboard dialog with real-time data visualization."""
     
@@ -4272,6 +4335,609 @@ class DashboardDialog(FluentDialog):
         self.dashboard_backend.unregister_update_callback(self.update_dashboard)
         super().closeEvent(event)
 
+class TaskManager:
+    def __init__(self):
+        self.tasks = []
+        self.default_file = "tasks.json"
+        self._load_tasks_from_default()
+        
+    def _load_tasks_from_default(self):
+        try:
+            if os.path.exists(self.default_file):
+                with open(self.default_file, "r") as file:
+                    self.tasks = json.load(file)
+        except Exception:
+            # Se il caricamento fallisce, iniziamo con una lista vuota
+            self.tasks = []
+    
+    def _save_tasks_to_default(self):
+        try:
+            with open(self.default_file, "w") as file:
+                json.dump(self.tasks, file)
+            return True
+        except Exception:
+            return False
+    
+class TaskDetailsDialog(QDialog):
+    def __init__(self, task=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Task Details")
+        self.task = task or {}
+        self.setMinimumWidth(400)
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Form layout per i dettagli
+        form = QFormLayout()
+        
+        # Task description
+        self.task_input = QLineEdit()
+        if "task" in self.task:
+            self.task_input.setText(self.task["task"])
+        form.addRow("Task:", self.task_input)
+        
+        # Priority
+        self.priority_combo = QComboBox()
+        self.priority_combo.addItems(["Low", "Medium", "High"])
+        if "priority" in self.task:
+            self.priority_combo.setCurrentText(self.task["priority"])
+        form.addRow("Priority:", self.priority_combo)
+        
+        # Completed
+        self.completed_check = QCheckBox()
+        if "completed" in self.task:
+            self.completed_check.setChecked(self.task["completed"])
+        form.addRow("Completed:", self.completed_check)
+        
+        # Reminder date
+        self.reminder_date = QDateEdit()
+        self.reminder_date.setDate(QDate.currentDate())
+        self.reminder_date.setCalendarPopup(True)
+        if "reminder" in self.task:
+            try:
+                date = QDate.fromString(self.task["reminder"], "yyyy-MM-dd")
+                if date.isValid():
+                    self.reminder_date.setDate(date)
+            except Exception:
+                pass
+        form.addRow("Reminder:", self.reminder_date)
+        
+        # Tags
+        self.tags_input = QLineEdit()
+        if "tags" in self.task:
+            self.tags_input.setText(", ".join(self.task["tags"]))
+        form.addRow("Tags (comma separated):", self.tags_input)
+        
+        # Notes
+        self.notes_input = QTextEdit()
+        if "notes" in self.task:
+            self.notes_input.setText(self.task["notes"])
+        form.addRow("Notes:", self.notes_input)
+        
+        layout.addLayout(form)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(save_btn)
+        
+        layout.addLayout(button_layout)
+    
+    def get_task_data(self):
+        task_data = {
+            "task": self.task_input.text(),
+            "priority": self.priority_combo.currentText(),
+            "completed": self.completed_check.isChecked(),
+            "reminder": self.reminder_date.date().toString("yyyy-MM-dd"),
+            "tags": [tag.strip() for tag in self.tags_input.text().split(",") if tag.strip()],
+            "notes": self.notes_input.toPlainText()
+        }
+        return task_data
+
+class TaskManagerWidget(QWidget):
+    def __init__(self, parent=None, theme_manager=None):
+        super().__init__(parent)
+        self.theme_manager = theme_manager
+        self.task_manager = TaskManager()
+        self.init_ui()
+        
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+        
+        # Titolo
+        title_label = QLabel("Task Manager")
+        font = QFont()
+        font.setPointSize(14)
+        font.setBold(True)
+        title_label.setFont(font)
+        title_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(title_label)
+        
+        # Tabs per organizzare le sezioni
+        self.tabs = QTabWidget()
+        
+        # Tab principale delle attività
+        tasks_tab = QWidget()
+        tasks_layout = QVBoxLayout(tasks_tab)
+        
+        # Toolbar con pulsanti di azione
+        toolbar = QHBoxLayout()
+        
+        self.add_task_btn = QPushButton("Add Task")
+        self.add_task_btn.setIcon(QIcon("assets/add_icon.png"))
+        self.add_task_btn.clicked.connect(self.add_task)
+        
+        self.edit_task_btn = QPushButton("Edit")
+        self.edit_task_btn.clicked.connect(self.edit_task)
+        
+        self.remove_task_btn = QPushButton("Remove")
+        self.remove_task_btn.clicked.connect(self.remove_task)
+        
+        self.mark_completed_btn = QPushButton("Mark Complete")
+        self.mark_completed_btn.clicked.connect(self.mark_completed)
+        
+        toolbar.addWidget(self.add_task_btn)
+        toolbar.addWidget(self.edit_task_btn)
+        toolbar.addWidget(self.remove_task_btn)
+        toolbar.addWidget(self.mark_completed_btn)
+        
+        tasks_layout.addLayout(toolbar)
+        
+        # Search box
+        search_layout = QHBoxLayout()
+        search_label = QLabel("Search:")
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Type to search tasks...")
+        self.search_input.textChanged.connect(self.filter_tasks)
+        
+        search_layout.addWidget(search_label)
+        search_layout.addWidget(self.search_input)
+        
+        tasks_layout.addLayout(search_layout)
+        
+        # Filtro per mostrare completati/non completati
+        filter_layout = QHBoxLayout()
+        self.show_completed_check = QCheckBox("Show Completed")
+        self.show_completed_check.setChecked(True)
+        self.show_completed_check.stateChanged.connect(self.refresh_tasks)
+        
+        self.show_pending_check = QCheckBox("Show Pending")
+        self.show_pending_check.setChecked(True)
+        self.show_pending_check.stateChanged.connect(self.refresh_tasks)
+        
+        filter_layout.addWidget(self.show_completed_check)
+        filter_layout.addWidget(self.show_pending_check)
+        filter_layout.addStretch()
+        
+        tasks_layout.addLayout(filter_layout)
+        
+        # Lista delle attività
+        self.tasks_list = QListWidget()
+        self.tasks_list.setSelectionMode(QListWidget.SingleSelection)
+        self.tasks_list.itemDoubleClicked.connect(self.show_task_details)
+        tasks_layout.addWidget(self.tasks_list)
+        
+        # Stats summary
+        stats_group = QGroupBox("Statistics")
+        stats_layout = QFormLayout(stats_group)
+        
+        self.total_label = QLabel("0")
+        self.completed_label = QLabel("0")
+        self.pending_label = QLabel("0")
+        
+        stats_layout.addRow("Total Tasks:", self.total_label)
+        stats_layout.addRow("Completed:", self.completed_label)
+        stats_layout.addRow("Pending:", self.pending_label)
+        
+        tasks_layout.addWidget(stats_group)
+        
+        # Salvataggio automatico al termine
+        self.autosave_check = QCheckBox("Auto-save changes")
+        self.autosave_check.setChecked(True)
+        tasks_layout.addWidget(self.autosave_check)
+        
+        # Tab di Stats e dettagli
+        stats_tab = QWidget()
+        stats_detail_layout = QVBoxLayout(stats_tab)
+        
+        # Priorità breakdown
+        priority_group = QGroupBox("Priority Breakdown")
+        priority_layout = QFormLayout(priority_group)
+        self.high_priority_label = QLabel("0")
+        self.medium_priority_label = QLabel("0")
+        self.low_priority_label = QLabel("0")
+        
+        priority_layout.addRow("High Priority:", self.high_priority_label)
+        priority_layout.addRow("Medium Priority:", self.medium_priority_label)
+        priority_layout.addRow("Low Priority:", self.low_priority_label)
+        
+        stats_detail_layout.addWidget(priority_group)
+        
+        # Tags cloud
+        tags_group = QGroupBox("Common Tags")
+        tags_layout = QVBoxLayout(tags_group)
+        self.tags_label = QLabel("No tags yet")
+        self.tags_label.setWordWrap(True)
+        tags_layout.addWidget(self.tags_label)
+        
+        stats_detail_layout.addWidget(tags_group)
+        stats_detail_layout.addStretch()
+        
+        # Setting tab
+        settings_tab = QWidget()
+        settings_layout = QVBoxLayout(settings_tab)
+        
+        export_group = QGroupBox("Export/Import")
+        export_layout = QVBoxLayout(export_group)
+        
+        self.export_btn = QPushButton("Export Tasks")
+        self.export_btn.clicked.connect(self.export_tasks)
+        
+        self.import_btn = QPushButton("Import Tasks")
+        self.import_btn.clicked.connect(self.import_tasks)
+        
+        export_layout.addWidget(self.export_btn)
+        export_layout.addWidget(self.import_btn)
+        
+        settings_layout.addWidget(export_group)
+        
+        # Clear tasks
+        clear_group = QGroupBox("Clear Tasks")
+        clear_layout = QVBoxLayout(clear_group)
+        
+        self.clear_completed_btn = QPushButton("Clear Completed Tasks")
+        self.clear_completed_btn.clicked.connect(self.clear_completed_tasks)
+        
+        self.clear_all_btn = QPushButton("Clear All Tasks")
+        self.clear_all_btn.clicked.connect(self.clear_all_tasks)
+        
+        clear_layout.addWidget(self.clear_completed_btn)
+        clear_layout.addWidget(self.clear_all_btn)
+        
+        settings_layout.addWidget(clear_group)
+        settings_layout.addStretch()
+        
+        # Add tabs
+        self.tabs.addTab(tasks_tab, "Tasks")
+        self.tabs.addTab(stats_tab, "Statistics")
+        self.tabs.addTab(settings_tab, "Settings")
+        
+        main_layout.addWidget(self.tabs)
+        
+        # Carica i task e aggiorna le statistiche
+        self.refresh_tasks()
+
+    # Aggiungi questo metodo alla classe TaskManagerWidget
+    def update_theme(self):
+        """Aggiorna il tema del widget in base al tema corrente dell'app"""
+        if not self.theme_manager:
+            return
+            
+        is_dark = self.theme_manager.is_dark_mode()
+        
+        # Colori di base
+        bg_color = "#1f1f1f" if is_dark else "#ffffff"
+        text_color = "#ffffff" if is_dark else "#000000"
+        border_color = "#3d3d3d" if is_dark else "#e0e0e0"
+        hover_color = "#3d3d3d" if is_dark else "#f0f0f0"
+        
+        # Applica stili specifici per il widget
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {bg_color};
+                color: {text_color};
+            }}
+            
+            QTabWidget::pane {{
+                border: 1px solid {border_color};
+                border-radius: 4px;
+            }}
+            
+            QTabBar::tab {{
+                background-color: {bg_color};
+                color: {text_color};
+                padding: 8px 12px;
+                border: 1px solid {border_color};
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }}
+            
+            QTabBar::tab:selected {{
+                background-color: {"#2d2d2d" if is_dark else "#f8f8f8"};
+                border-bottom: none;
+            }}
+            
+            QListWidget {{
+                background-color: {"#2d2d2d" if is_dark else "#ffffff"};
+                border: 1px solid {border_color};
+                border-radius: 4px;
+            }}
+            
+            QListWidget::item:hover {{
+                background-color: {hover_color};
+            }}
+            
+            QListWidget::item:selected {{
+                background-color: {"#0078d4" if is_dark else "#e5f3ff"};
+                color: {"#ffffff" if is_dark else "#000000"};
+            }}
+            
+            QPushButton {{
+                background-color: {"#2d2d2d" if is_dark else "#f0f0f0"};
+                border: 1px solid {border_color};
+                padding: 5px 10px;
+                border-radius: 4px;
+            }}
+            
+            QPushButton:hover {{
+                background-color: {"#3d3d3d" if is_dark else "#e0e0e0"};
+            }}
+            
+            QLineEdit, QTextEdit, QDateEdit, QComboBox {{
+                background-color: {"#2d2d2d" if is_dark else "#ffffff"};
+                border: 1px solid {border_color};
+                padding: 5px;
+                border-radius: 4px;
+            }}
+            
+            QGroupBox {{
+                border: 1px solid {border_color};
+                border-radius: 4px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }}
+            
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }}
+        """)
+
+    def refresh_tasks(self):
+        """Aggiorna la lista delle attività e le statistiche"""
+        self.tasks_list.clear()
+        
+        show_completed = self.show_completed_check.isChecked()
+        show_pending = self.show_pending_check.isChecked()
+        search_text = self.search_input.text().lower()
+        
+        for i, task in enumerate(self.task_manager.tasks):
+            # Filtra per stato completato/pendente
+            if (task["completed"] and not show_completed) or (not task["completed"] and not show_pending):
+                continue
+                
+            # Filtra per testo di ricerca
+            if search_text and search_text not in task["task"].lower():
+                continue
+                
+            item = QListWidgetItem(task["task"])
+            item.setData(Qt.UserRole, i)  # Memorizza l'indice del task
+            
+            # Colore diverso basato su completamento
+            if task["completed"]:
+                item.setForeground(QColor(100, 100, 100))
+                item.setText(f"✓ {task['task']}")
+            
+            # Colore basato sulla priorità
+            if "priority" in task:
+                if task["priority"] == "High":
+                    item.setForeground(QColor(200, 0, 0))
+                elif task["priority"] == "Medium":
+                    item.setForeground(QColor(200, 120, 0))
+            
+            self.tasks_list.addItem(item)
+            
+        self.update_statistics()
+    
+    def filter_tasks(self):
+        """Filtra le attività in base al testo di ricerca"""
+        self.refresh_tasks()  # Usa la stessa funzione con il testo di ricerca
+    
+    def update_statistics(self):
+        """Aggiorna tutte le statistiche"""
+        # Contatori base
+        total = len(self.task_manager.tasks)
+        completed = sum(1 for task in self.task_manager.tasks if task["completed"])
+        pending = total - completed
+        
+        self.total_label.setText(str(total))
+        self.completed_label.setText(str(completed))
+        self.pending_label.setText(str(pending))
+        
+        # Contatori di priorità
+        high = sum(1 for task in self.task_manager.tasks if task.get("priority") == "High")
+        medium = sum(1 for task in self.task_manager.tasks if task.get("priority") == "Medium")
+        low = sum(1 for task in self.task_manager.tasks if task.get("priority") == "Low")
+        
+        self.high_priority_label.setText(str(high))
+        self.medium_priority_label.setText(str(medium))
+        self.low_priority_label.setText(str(low))
+        
+        # Tags cloud
+        all_tags = []
+        for task in self.task_manager.tasks:
+            if "tags" in task and task["tags"]:
+                all_tags.extend(task["tags"])
+                
+        if all_tags:
+            from collections import Counter
+            tag_counter = Counter(all_tags)
+            common_tags = [f"{tag} ({count})" for tag, count in tag_counter.most_common(10)]
+            self.tags_label.setText(", ".join(common_tags))
+        else:
+            self.tags_label.setText("No tags yet")
+    
+    def add_task(self):
+        """Aggiungi una nuova attività"""
+        dialog = TaskDetailsDialog(parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            task_data = dialog.get_task_data()
+            self.task_manager.tasks.append(task_data)
+            self.refresh_tasks()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def edit_task(self):
+        """Modifica un'attività esistente"""
+        selected_items = self.tasks_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Selection", "Please select a task to edit.")
+            return
+            
+        item = selected_items[0]
+        task_index = item.data(Qt.UserRole)
+        
+        dialog = TaskDetailsDialog(self.task_manager.tasks[task_index], parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.task_manager.tasks[task_index] = dialog.get_task_data()
+            self.refresh_tasks()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def remove_task(self):
+        """Rimuove un'attività"""
+        selected_items = self.tasks_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Selection", "Please select a task to remove.")
+            return
+            
+        item = selected_items[0]
+        task_index = item.data(Qt.UserRole)
+        
+        reply = QMessageBox.question(self, "Confirm Removal", 
+                                    "Are you sure you want to remove this task?",
+                                    QMessageBox.Yes | QMessageBox.No, 
+                                    QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            del self.task_manager.tasks[task_index]
+            self.refresh_tasks()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def mark_completed(self):
+        """Marca un'attività come completata"""
+        selected_items = self.tasks_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Selection", "Please select a task to mark as completed.")
+            return
+            
+        item = selected_items[0]
+        task_index = item.data(Qt.UserRole)
+        
+        # Toggle completion state
+        current_state = self.task_manager.tasks[task_index].get("completed", False)
+        self.task_manager.tasks[task_index]["completed"] = not current_state
+        
+        self.refresh_tasks()
+        
+        if self.autosave_check.isChecked():
+            self.task_manager._save_tasks_to_default()
+    
+    def show_task_details(self):
+        """Mostra i dettagli di un'attività"""
+        selected_items = self.tasks_list.selectedItems()
+        if not selected_items:
+            return
+            
+        item = selected_items[0]
+        task_index = item.data(Qt.UserRole)
+        
+        dialog = TaskDetailsDialog(self.task_manager.tasks[task_index], parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.task_manager.tasks[task_index] = dialog.get_task_data()
+            self.refresh_tasks()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def export_tasks(self):
+        """Esporta i task su file"""
+        from PyQt5.QtWidgets import QFileDialog
+        
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Tasks", "", "JSON Files (*.json)")
+        if file_path:
+            try:
+                with open(file_path, "w") as file:
+                    json.dump(self.task_manager.tasks, file)
+                QMessageBox.information(self, "Export Successful", f"Tasks exported to {file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Error exporting tasks: {str(e)}")
+    
+    def import_tasks(self):
+        """Importa i task da file"""
+        from PyQt5.QtWidgets import QFileDialog
+        
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import Tasks", "", "JSON Files (*.json)")
+        if file_path:
+            try:
+                with open(file_path, "r") as file:
+                    tasks = json.load(file)
+                
+                # Verifica il formato
+                if not isinstance(tasks, list):
+                    raise ValueError("Invalid task format")
+                    
+                # Aggiungi o sostituisci?
+                reply = QMessageBox.question(self, "Import Options", 
+                                          "Do you want to replace current tasks or append?",
+                                          QMessageBox.StandardButtons(
+                                              QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+                                          ))
+                
+                if reply == QMessageBox.Cancel:
+                    return
+                elif reply == QMessageBox.Yes:  # Replace
+                    self.task_manager.tasks = tasks
+                else:  # Append
+                    self.task_manager.tasks.extend(tasks)
+                
+                self.refresh_tasks()
+                
+                if self.autosave_check.isChecked():
+                    self.task_manager._save_tasks_to_default()
+                    
+                QMessageBox.information(self, "Import Successful", f"Tasks imported from {file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", f"Error importing tasks: {str(e)}")
+    
+    def clear_completed_tasks(self):
+        """Cancella tutte le attività completate"""
+        reply = QMessageBox.question(self, "Confirm Clearing", 
+                                  "Are you sure you want to clear all completed tasks?",
+                                  QMessageBox.Yes | QMessageBox.No, 
+                                  QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.task_manager.tasks = [task for task in self.task_manager.tasks if not task.get("completed", False)]
+            self.refresh_tasks()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def clear_all_tasks(self):
+        """Cancella tutte le attività"""
+        reply = QMessageBox.question(self, "Confirm Clearing", 
+                                  "Are you sure you want to clear ALL tasks? This cannot be undone.",
+                                  QMessageBox.Yes | QMessageBox.No, 
+                                  QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.task_manager.tasks = []
+            self.refresh_tasks()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
 
 
 class LoanApp(QMainWindow):
@@ -4292,6 +4958,9 @@ class LoanApp(QMainWindow):
         self.db_manager.create_db()
 
         self.crm_manager = LoanCRM(self.db_manager)
+
+        # Crea il widget TaskManager
+        self.task_manager_widget = TaskManagerWidget(parent=self, theme_manager=self.theme_manager)
 
         if not self.db_manager.check_connection():
             QMessageBox.critical(self, "Database Error", "Impossibile connettersi al database.")
@@ -4331,8 +5000,16 @@ class LoanApp(QMainWindow):
         dashboard_button = QPushButton("Dashboard")
         dashboard_button.setIcon(QIcon(resource_path("dashboard.png")))
         dashboard_button.clicked.connect(self.open_dashboard)
-        self.sidebar.add_widget(dashboard_button)
-        
+        self.sidebar.add_widget(dashboard_button) 
+
+        # Aggiungi un bottone per aprire il TaskManager nella sidebar
+        task_button = QPushButton("Tasks")
+        task_button.setIcon(QIcon(resource_path("tasks.png")))  # Assicurati di avere questa icona
+        task_button.clicked.connect(self.toggle_task_manager)
+        self.sidebar.add_widget(task_button)
+        self.task_manager_widget.hide()
+        self.sidebar.add_widget(self.task_manager_widget)
+
         # Inizialmente nascondi il widget CRM
         self.crm_widget.hide()
         self.sidebar.add_widget(self.crm_widget)
@@ -4510,7 +5187,10 @@ class LoanApp(QMainWindow):
         if hasattr(self, 'crm_widget'):
             self.crm_widget.update_style()
 
-
+        # Applica stili al TaskManagerWidget
+        if hasattr(self, 'task_manager_widget'):
+            self.task_manager_widget.update_theme()
+            
     def load_existing_loans(self):
         """Carica i prestiti dal database e li mostra nella UI."""
         self.loans = []  # Puliamo la lista dei prestiti
@@ -4638,6 +5318,10 @@ class LoanApp(QMainWindow):
         if hasattr(self, 'crm_widget'):
             self.crm_widget.update_style()
 
+        # Aggiorna anche lo stile del TaskManagerWidget
+        if hasattr(self, 'task_manager_widget'):
+            self.task_manager_widget.update_theme()
+
         # Mostra feedback all'utente
         theme_name = self.theme_manager.get_current_theme().capitalize()
         QMessageBox.information(self, "Theme Changed", f"Switched to {theme_name} theme")
@@ -4659,7 +5343,7 @@ class LoanApp(QMainWindow):
                     amortization_type=loan_data["amortization_type"],
                     frequency=loan_data["frequency"],
                     downpayment_percent=loan_data["downpayment_percent"],
-                    additional_costs=loan_data["additional_costs"],
+                    additional_costs=loan_data.get("additional_costs", {}),
                     periodic_expenses=loan_data.get("periodic_expenses", {}),
                     should_save=True  # Enable auto-save for new loans
                 )
@@ -4821,11 +5505,11 @@ class LoanApp(QMainWindow):
         dialog = ProbabilisticPricingDialog(self.selected_loan, self)
         dialog.exec_()
 
-
     def open_dashboard(self):
         """Open the loan dashboard dialog."""
         dashboard = DashboardDialog(self.db_manager, self)
         dashboard.exec_()
+
 
     def open_ai_assistant(self):
         """Opens the AI assistant dialog"""
@@ -5018,7 +5702,7 @@ class LoanApp(QMainWindow):
             raise
         # Initialize chatbot
 
-        self.chatbot = Chatbot("intents.json")
+        self.chatbot = Chatbot(resource_path("intents.json"), db_manager=self.db_manager)
         
     def display_loans(self):
         """Returns a formatted string of all loans for the chatbot"""
@@ -5035,6 +5719,16 @@ class LoanApp(QMainWindow):
                 f"\n---"
             )
         return "\n".join(loans_info)
+
+    def toggle_task_manager(self):
+        """Toggle visibility of TaskManager widget"""
+        if self.task_manager_widget.isVisible():
+            self.task_manager_widget.hide()
+        else:
+            # Nascondi altri widget se visibili
+            if hasattr(self, 'crm_widget') and self.crm_widget.isVisible():
+                self.crm_widget.hide()
+            self.task_manager_widget.show()
 
 class ConsolidateLoansDialog(FluentDialog):
     def __init__(self, loans, parent=None):
@@ -5545,7 +6239,6 @@ class LoanSelectionDialog(FluentDialog):
         return [item.data(Qt.UserRole) for item in selected_items]
 
 
-
 class  ChatAssistantDialog(QDialog):
 
     def __init__(self, loan_app, parent=None):
@@ -5555,9 +6248,10 @@ class  ChatAssistantDialog(QDialog):
         self.db_manager = loan_app.db_manager
         # Aggiungi l'icona della finestra
         self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
-        # Costruiamo il percorso assoluto al file degli intent
+        # Use direct path to intents.json in the same directory as the script
         intents_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'intents.json')
-        self.chatbot = Chatbot("intents.json", db_manager=self.db_manager)
+        self.chatbot = Chatbot(intents_file, db_manager=self.db_manager)
+
         # Sostituisci la conferma operatore con una versione GUI
         self.chatbot.operator_confirmation = lambda prompt: self.gui_operator_confirmation(prompt)
         self.main_layout = QVBoxLayout(self)
