@@ -7,6 +7,7 @@ from loan_report import LoanReport
 import time
 import threading
 import matplotlib.pyplot as plt
+from matplotlib import cm
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from functools import lru_cache
@@ -815,6 +816,56 @@ class DashboardData:
             # Return None to fall back to static map
             return None
         
+
+    def get_professional_pie_chart(self, data: dict, title: str):
+        """
+        Genera un grafico a torta professionale.
+
+        Args:
+            data: Dizionario dei dati, ad esempio {"Capitale": 100000, "Interessi": 25000}
+            title: Titolo del grafico
+
+        Returns:
+            Figura matplotlib formattata professionalmente.
+        """
+        # Crea la figura e l'asse
+        fig, ax = plt.subplots(figsize=(5, 5), dpi=100)
+        
+        # Imposta una palette di colori moderna usando un colormap
+        cmap = cm.get_cmap('Set3')
+        colors = [cmap(i) for i in range(len(data))]
+        
+        # Preparazione dei dati
+        labels = list(data.keys())
+        sizes = list(data.values())
+        
+        # Calcola l'explode per evidenziare la fetta più grande
+        max_value = max(sizes)
+        explode = [0.1 if s == max_value else 0 for s in sizes]
+        
+        # Crea il grafico a torta
+        wedges, texts, autotexts = ax.pie(
+            sizes,
+            labels=labels,
+            explode=explode,
+            colors=colors,
+            autopct='%1.1f%%',
+            startangle=140,
+            textprops={'fontsize': 10, 'color': 'black'}
+        )
+        
+        # Imposta il titolo con formattazione curata
+        ax.set_title(title, fontsize=14, fontweight='bold', color='#333333', pad=20)
+        ax.axis('equal')  # Garantisci che la torta sia perfettamente rotonda
+        
+        # Personalizza il formato dei testi interni
+        for autotext in autotexts:
+            autotext.set_color('black')
+            autotext.set_fontweight('bold')
+        
+        fig.tight_layout()
+        return fig
+
                 
     def get_chart_image(self, data, title, chart_type, **kwargs):
         """
@@ -976,46 +1027,20 @@ class DashboardData:
                     plt.xticks(rotation=45, ha='right')
                     plt.tight_layout(pad=2.0)
             
-            # Handle pie charts with improved styling
             elif chart_type == "pie":
-                # Get data lists in correct order
-                values = list(data.values())
-                labels = list(data.keys())
+                # Create pie chart with improved styling
+                fig = self.get_professional_pie_chart(data, title)
+                # Convert the figure to a base64-encoded string
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor=fig.get_facecolor())
+                buf.seek(0)
+                img_data = base64.b64encode(buf.read()).decode('utf-8')
+                plt.close(fig)
                 
-                # Create styled pie chart
-                wedges, texts, autotexts = plt.pie(
-                    values, 
-                    labels=None,  # We'll add a legend instead
-                    autopct='%1.1f%%',
-                    shadow=False,
-                    startangle=90,
-                    colors=color_palette[:len(values)],
-                    wedgeprops={'edgecolor': 'white', 'linewidth': 2},
-                    textprops={'color': app_colors['neutral'], 'fontsize': 14, 'weight': 'bold'}
-                )
-                
-                # Customize autopct text styling
-                for autotext in autotexts:
-                    autotext.set_color('white')
-                    autotext.set_fontsize(12)
-                    autotext.set_weight('bold')
-                
-                # Add a styled legend
-                plt.legend(
-                    wedges, 
-                    labels,
-                    title="Legenda",
-                    loc="center left",
-                    bbox_to_anchor=(0.9, 0, 0.5, 1),
-                    frameon=True,
-                    fancybox=True,
-                    shadow=True,
-                )
-                
-                # Add styled title
-                plt.title(title, fontsize=16, fontweight='bold', pad=20, color=app_colors['neutral'])
-                plt.tight_layout(pad=2.0)
-                
+                # Store in cache (optionally for future use)
+                self._chart_cache[title] = fig
+                return img_data
+            
             # Handle bar charts with improved styling
             elif chart_type == "bar":
                 # Create styled bar chart
