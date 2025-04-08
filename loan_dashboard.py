@@ -175,7 +175,8 @@ class DashboardData:
         if not hasattr(self._thread_local, 'conn'):
             # Create a new connection for this thread
             try:
-                self._thread_local.conn = self.db_manager.get_new_connection()
+                # Modifica: usando get_connection invece di get_new_connection
+                self._thread_local.conn = self.db_manager.get_connection()
             except Exception as e:
                 print(f"Error creating thread-local connection: {e}")
                 # Fall back to db_manager's connection
@@ -273,24 +274,18 @@ class DashboardData:
             return cached
             
         try:
-            # Create a report with a dedicated connection
-            thread_conn = self._get_thread_connection()
-            if thread_conn:
-                temp_db = DbManager(existing_connection=thread_conn)
-                temp_crm = LoanCRM(temp_db)
-                temp_report = LoanReport(temp_db, temp_crm)
-                data = temp_report.generate_crm_performance_report()
-            else:
-                data = self.loan_report.generate_crm_performance_report()
+            # Utilizzo diretto del loan_report esistente senza creare nuove connessioni
+            data = self.loan_report.generate_crm_performance_report()
                 
             # Aggiunta delle metriche mancanti calcolate dal database
             try:
                 # Ottieni una connessione al database
+                thread_conn = self._get_thread_connection()
                 if thread_conn:
                     conn = thread_conn
                 else:
-                    # Use get_connection method instead of accessing conn attribute
-                    conn = self.db_manager.get_new_connection()
+                    # Uso di get_connection invece di get_new_connection
+                    conn = self.db_manager.get_connection()
                 
                 cursor = conn.cursor()
                 
@@ -329,12 +324,13 @@ class DashboardData:
                 data["total_interactions"] = data.get("total_interactions", 0)
                 data["active_clients"] = data.get("active_clients", 0)
                 data["new_clients_last_30_days"] = data.get("new_clients_last_30_days", 0)
-                
+                    
             self._set_cached_data("crm_metrics", data)
             return data
         except Exception as e:
             print(f"CRM metrics error: {str(e)}")
             return {"error": f"CRM metrics error: {str(e)}", "is_error": True}
+        
                         
     @lru_cache(maxsize=32)
     def get_client_segmentation(self):
@@ -344,23 +340,15 @@ class DashboardData:
             return cached
             
         try:
-            # Create a report with a dedicated connection
-            thread_conn = self._get_thread_connection()
-            if thread_conn:
-                temp_db = DbManager(existing_connection=thread_conn)
-                temp_crm = LoanCRM(temp_db)
-                temp_report = LoanReport(temp_db, temp_crm)
-                data = temp_report.generate_client_segmentation_report()
-            else:
-                data = self.loan_report.generate_client_segmentation_report()
-                
+            # Utilizzo diretto del loan_report esistente senza creare nuove connessioni
+            data = self.loan_report.generate_client_segmentation_report()
+                    
             self._set_cached_data("client_segmentation", data)
             return data
         except Exception as e:
             print(f"Segmentation error: {str(e)}")
             return {"error": f"Segmentation error: {str(e)}", "is_error": True}
-            
-
+                                
     def _resolve_shapefile_path(self, filename, required=True):
         """
         Resolve shapefile path with robust fallback mechanisms
@@ -1222,17 +1210,9 @@ class DashboardData:
             return cached
             
         try:
-            # Create a report with a dedicated connection
-            thread_conn = self._get_thread_connection()
-            if thread_conn:
-                temp_db = DbManager(existing_connection=thread_conn)
-                temp_crm = LoanCRM(temp_db)
-                temp_report = LoanReport(temp_db, temp_crm)
-                forecast_df = temp_report.generate_forecasting_report(
-                    frequency='monthly', start='1994-01-01')
-            else:
-                forecast_df = self.loan_report.generate_forecasting_report(
-                    frequency='monthly', start='1994-01-01')
+            # Utilizzo diretto del loan_report esistente senza creare nuove connessioni
+            forecast_df = self.loan_report.generate_forecasting_report(
+                frequency='monthly', start='1994-01-01')
                 
             forecast_data = forecast_df.to_dict(orient='list')
             self._set_cached_data("forecasting_data", forecast_data)
@@ -1240,7 +1220,7 @@ class DashboardData:
         except Exception as e:
             print(f"Forecasting error: {str(e)}")
             return {"error": f"Forecasting error: {str(e)}", "is_error": True}
-
+        
 
     def clear_cache(self, component=None):
         """Clear specific component cache or all cache"""
