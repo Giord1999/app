@@ -1,7 +1,7 @@
 #Imports for the GUI
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, 
                              QLineEdit, QComboBox, QListWidget, QMessageBox, 
-                             QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
+                             QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, QInputDialog,
                              QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QStatusBar, QAction, QTabWidget, QFrame, QStackedWidget, QGridLayout, QDateEdit, QCheckBox, QFileDialog, QGroupBox, QProgressDialog, QProgressBar)
@@ -26,6 +26,7 @@ import json
 import sys
 import os
 import time
+from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import psycopg2
@@ -4335,29 +4336,192 @@ class DashboardDialog(FluentDialog):
         self.dashboard_backend.unregister_update_callback(self.update_dashboard)
         super().closeEvent(event)
 
+
+class FocusSessionDialog(QDialog):
+    def __init__(self, task, parent=None):
+        super().__init__(parent)
+        self.task = task
+        self.time_spent = 0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_timer)
+        self.completed = False
+        
+        self.setWindowTitle("Focus Session")
+        self.setMinimumWidth(400)
+        self.setup_ui()
+        
+        # Start session automatically
+        self.start_session()
+    
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Task info
+        task_label = QLabel(f"<h3>{self.task['task']}</h3>")
+        task_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(task_label)
+        
+        # Estimated time
+        if "estimated_time" in self.task and self.task["estimated_time"] > 0:
+            est_time = self.task["estimated_time"]
+            est_label = QLabel(f"Estimated time: {est_time} minutes")
+            est_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(est_label)
+        
+        # Timer display
+        self.timer_label = QLabel("00:00:00")
+        font = QFont()
+        font.setPointSize(24)
+        font.setBold(True)
+        self.timer_label.setFont(font)
+        self.timer_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.timer_label)
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        
+        # Set maximum to estimated time in seconds, or default to 25 minutes (pomodoro)
+        if "estimated_time" in self.task and self.task["estimated_time"] > 0:
+            self.progress_bar.setMaximum(self.task["estimated_time"] * 60)
+        else:
+            self.progress_bar.setMaximum(25 * 60)  # 25 minutes default
+            
+        layout.addWidget(self.progress_bar)
+        
+        # Notes section
+        layout.addWidget(QLabel("Session Notes:"))
+        self.notes_input = QTextEdit()
+        if "notes" in self.task:
+            self.notes_input.setText(self.task["notes"])
+        layout.addWidget(self.notes_input)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        self.complete_button = QPushButton("Complete Task")
+        self.complete_button.clicked.connect(self.complete_task)
+        
+        self.exit_button = QPushButton("Exit Session")
+        self.exit_button.clicked.connect(self.accept)
+        
+        button_layout.addWidget(self.complete_button)
+        button_layout.addWidget(self.exit_button)
+        
+        layout.addLayout(button_layout)
+    
+    def start_session(self):
+        """Start the focus session timer"""
+        self.start_time = time.time()
+        self.timer.start(1000)  # Update every second
+    
+    def update_timer(self):
+        """Update the timer display"""
+        self.time_spent = int(time.time() - self.start_time)
+        
+        hours = self.time_spent // 3600
+        minutes = (self.time_spent % 3600) // 60
+        seconds = self.time_spent % 60
+        
+        self.timer_label.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+        self.progress_bar.setValue(min(self.time_spent, self.progress_bar.maximum()))
+    
+    def complete_task(self):
+        """Mark the task as completed"""
+        self.completed = True
+        self.task["notes"] = self.notes_input.toPlainText()
+        
+        # Add time spent
+        if "time_spent" not in self.task:
+            self.task["time_spent"] = 0
+        self.task["time_spent"] += self.time_spent // 60  # Convert to minutes
+        
+        self.accept()
+    
+    def closeEvent(self, event):
+        """Handle dialog close event"""
+        self.task["notes"] = self.notes_input.toPlainText()
+        
+        # Add time spent
+        if "time_spent" not in self.task:
+            self.task["time_spent"] = 0
+        self.task["time_spent"] += self.time_spent // 60  # Convert to minutes
+        
+        self.timer.stop()
+        super().closeEvent(event)
+
 class TaskManager:
     def __init__(self):
         self.tasks = []
         self.default_file = "tasks.json"
+        self.projects = {}  # Add projects dictionary
         self._load_tasks_from_default()
         
     def _load_tasks_from_default(self):
         try:
             if os.path.exists(self.default_file):
                 with open(self.default_file, "r") as file:
-                    self.tasks = json.load(file)
+                    data = json.load(file)
+                    # Check if it's a dictionary with projects and tasks
+                    if isinstance(data, dict) and "tasks" in data and "projects" in data:
+                        self.tasks = data["tasks"]
+                        self.projects = data["projects"]
+                    else:
+                        # Legacy format - just tasks array
+                        self.tasks = data
         except Exception:
             # Se il caricamento fallisce, iniziamo con una lista vuota
             self.tasks = []
+            self.projects = {}
     
     def _save_tasks_to_default(self):
         try:
+            # Save both tasks and projects
+            data = {
+                "tasks": self.tasks,
+                "projects": self.projects
+            }
             with open(self.default_file, "w") as file:
-                json.dump(self.tasks, file)
+                json.dump(data, file)
             return True
         except Exception:
             return False
+
+    def auto_backup(self):
+        """Create an automatic backup of all tasks and projects"""
+        if not self.tasks and not self.projects:
+            return False
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = f"backup_{timestamp}.json"
+        
+        try:
+            data = {
+                "tasks": self.tasks,
+                "projects": self.projects
+            }
+            with open(backup_file, "w") as file:
+                json.dump(data, file)
+            return True
+        except Exception:
+            return False
+
+    def create_project(self, project_name):
+        """Create a new project"""
+        if not project_name or project_name in self.projects:
+            return False
+            
+        self.projects[project_name] = []
+        return True
     
+    def add_task_to_project(self, project_name, task_data):
+        """Add a task to a project"""
+        if project_name not in self.projects:
+            return False
+            
+        self.projects[project_name].append(task_data)
+        return True
+
 class TaskDetailsDialog(QDialog):
     def __init__(self, task=None, parent=None):
         super().__init__(parent)
@@ -4404,6 +4568,40 @@ class TaskDetailsDialog(QDialog):
                 pass
         form.addRow("Reminder:", self.reminder_date)
         
+        # Due date
+        self.due_date = QDateEdit()
+        self.due_date.setDate(QDate.currentDate())
+        self.due_date.setCalendarPopup(True)
+        if "due_date" in self.task:
+            try:
+                date = QDate.fromString(self.task["due_date"], "yyyy-MM-dd")
+                if date.isValid():
+                    self.due_date.setDate(date)
+            except Exception:
+                pass
+        form.addRow("Due Date:", self.due_date)
+        
+        # Estimated time
+        self.est_time = QSpinBox()
+        self.est_time.setRange(0, 999)
+        self.est_time.setSuffix(" minutes")
+        if "estimated_time" in self.task:
+            self.est_time.setValue(int(self.task["estimated_time"]))
+        form.addRow("Estimated Time:", self.est_time)
+        
+        # Recurrence
+        self.recurrence_combo = QComboBox()
+        self.recurrence_combo.addItems(["None", "Daily", "Weekly", "Monthly"])
+        if "recurrence" in self.task:
+            rec = self.task["recurrence"]
+            if rec == "daily":
+                self.recurrence_combo.setCurrentText("Daily")
+            elif rec == "weekly":
+                self.recurrence_combo.setCurrentText("Weekly")
+            elif rec == "monthly":
+                self.recurrence_combo.setCurrentText("Monthly")
+        form.addRow("Recurrence:", self.recurrence_combo)
+        
         # Tags
         self.tags_input = QLineEdit()
         if "tags" in self.task:
@@ -4416,7 +4614,40 @@ class TaskDetailsDialog(QDialog):
             self.notes_input.setText(self.task["notes"])
         form.addRow("Notes:", self.notes_input)
         
+        # Subtasks section
+        subtasks_group = QGroupBox("Subtasks")
+        subtasks_layout = QVBoxLayout(subtasks_group)
+        
+        # Subtask list
+        self.subtasks_list = QListWidget()
+        if "subtasks" in self.task and self.task["subtasks"]:
+            for subtask in self.task["subtasks"]:
+                item = QListWidgetItem(subtask["task"])
+                item.setCheckState(Qt.Checked if subtask["completed"] else Qt.Unchecked)
+                self.subtasks_list.addItem(item)
+        subtasks_layout.addWidget(self.subtasks_list)
+        
+        # Add subtask section
+        subtask_add_layout = QHBoxLayout()
+        self.subtask_input = QLineEdit()
+        self.subtask_input.setPlaceholderText("New subtask...")
+        add_subtask_btn = QPushButton("Add")
+        add_subtask_btn.clicked.connect(self.add_subtask)
+        subtask_add_layout.addWidget(self.subtask_input)
+        subtask_add_layout.addWidget(add_subtask_btn)
+        subtasks_layout.addLayout(subtask_add_layout)
+        
+        # Project assignment
+        self.project_combo = QComboBox()
+        self.project_combo.addItem("None")
+        # Projects will be populated by the parent widget before showing the dialog
+        if "project" in self.task:
+            # Will be set by parent widget
+            pass
+        form.addRow("Project:", self.project_combo)
+        
         layout.addLayout(form)
+        layout.addWidget(subtasks_group)
         
         # Buttons
         button_layout = QHBoxLayout()
@@ -4431,17 +4662,56 @@ class TaskDetailsDialog(QDialog):
         
         layout.addLayout(button_layout)
     
+    def add_subtask(self):
+        """Add a new subtask to the list"""
+        subtask_text = self.subtask_input.text().strip()
+        if subtask_text:
+            item = QListWidgetItem(subtask_text)
+            item.setCheckState(Qt.Unchecked)
+            self.subtasks_list.addItem(item)
+            self.subtask_input.clear()
+    
     def get_task_data(self):
+        # Collect subtasks
+        subtasks = []
+        for i in range(self.subtasks_list.count()):
+            item = self.subtasks_list.item(i)
+            subtask_data = {
+                "task": item.text(),
+                "completed": item.checkState() == Qt.Checked
+            }
+            subtasks.append(subtask_data)
+        
+        # Get recurrence value
+        recurrence = None
+        rec_text = self.recurrence_combo.currentText()
+        if rec_text == "Daily":
+            recurrence = "daily"
+        elif rec_text == "Weekly":
+            recurrence = "weekly"
+        elif rec_text == "Monthly":
+            recurrence = "monthly"
+            
+        # Get project
+        project = None
+        if self.project_combo.currentText() != "None":
+            project = self.project_combo.currentText()
+            
         task_data = {
             "task": self.task_input.text(),
             "priority": self.priority_combo.currentText(),
             "completed": self.completed_check.isChecked(),
             "reminder": self.reminder_date.date().toString("yyyy-MM-dd"),
+            "due_date": self.due_date.date().toString("yyyy-MM-dd"),
+            "estimated_time": self.est_time.value(),
+            "recurrence": recurrence,
             "tags": [tag.strip() for tag in self.tags_input.text().split(",") if tag.strip()],
-            "notes": self.notes_input.toPlainText()
+            "notes": self.notes_input.toPlainText(),
+            "subtasks": subtasks,
+            "project": project
         }
         return task_data
-
+    
 class TaskManagerWidget(QWidget):
     def __init__(self, parent=None, theme_manager=None):
         super().__init__(parent)
@@ -4569,7 +4839,49 @@ class TaskManagerWidget(QWidget):
         tags_layout.addWidget(self.tags_label)
         
         stats_detail_layout.addWidget(tags_group)
+        
+        # Due dates breakdown
+        due_dates_group = QGroupBox("Due Dates")
+        due_dates_layout = QFormLayout(due_dates_group)
+        self.due_today_label = QLabel("0")
+        self.due_this_week_label = QLabel("0")
+        self.overdue_label = QLabel("0")
+        
+        due_dates_layout.addRow("Due Today:", self.due_today_label)
+        due_dates_layout.addRow("Due This Week:", self.due_this_week_label)
+        due_dates_layout.addRow("Overdue:", self.overdue_label)
+        
+        stats_detail_layout.addWidget(due_dates_group)
         stats_detail_layout.addStretch()
+        
+        # Projects tab
+        projects_tab = QWidget()
+        projects_layout = QVBoxLayout(projects_tab)
+        
+        # Projects toolbar
+        projects_toolbar = QHBoxLayout()
+        
+        self.create_project_btn = QPushButton("New Project")
+        self.create_project_btn.clicked.connect(self.create_project)
+        
+        self.add_to_project_btn = QPushButton("Add Task to Project")
+        self.add_to_project_btn.clicked.connect(self.add_task_to_project)
+        
+        projects_toolbar.addWidget(self.create_project_btn)
+        projects_toolbar.addWidget(self.add_to_project_btn)
+        
+        projects_layout.addLayout(projects_toolbar)
+        
+        # Projects list
+        self.projects_list = QListWidget()
+        self.projects_list.itemClicked.connect(self.show_project_tasks)
+        projects_layout.addWidget(self.projects_list)
+        
+        # Project tasks display
+        self.project_tasks_list = QListWidget()
+        self.project_tasks_list.itemDoubleClicked.connect(self.edit_project_task)
+        projects_layout.addWidget(QLabel("Project Tasks:"))
+        projects_layout.addWidget(self.project_tasks_list)
         
         # Setting tab
         settings_tab = QWidget()
@@ -4589,6 +4901,21 @@ class TaskManagerWidget(QWidget):
         
         settings_layout.addWidget(export_group)
         
+        # Backup options
+        backup_group = QGroupBox("Backup Options")
+        backup_layout = QVBoxLayout(backup_group)
+        
+        self.backup_btn = QPushButton("Create Backup")
+        self.backup_btn.clicked.connect(self.create_backup)
+        
+        self.auto_backup_check = QCheckBox("Auto-backup on exit")
+        self.auto_backup_check.setChecked(True)
+        
+        backup_layout.addWidget(self.backup_btn)
+        backup_layout.addWidget(self.auto_backup_check)
+        
+        settings_layout.addWidget(backup_group)
+        
         # Clear tasks
         clear_group = QGroupBox("Clear Tasks")
         clear_layout = QVBoxLayout(clear_group)
@@ -4605,104 +4932,339 @@ class TaskManagerWidget(QWidget):
         settings_layout.addWidget(clear_group)
         settings_layout.addStretch()
         
+        # Dashboard tab
+        dashboard_tab = QWidget()
+        dashboard_layout = QVBoxLayout(dashboard_tab)
+        
+        # Dashboard summary
+        self.dashboard_summary = QTextEdit()
+        self.dashboard_summary.setReadOnly(True)
+        dashboard_layout.addWidget(QLabel("Dashboard Summary:"))
+        dashboard_layout.addWidget(self.dashboard_summary)
+        
+        # Focus mode section
+        focus_group = QGroupBox("Focus Mode")
+        focus_layout = QVBoxLayout(focus_group)
+        
+        self.focus_task_list = QListWidget()
+        self.start_focus_btn = QPushButton("Start Focus Session")
+        self.start_focus_btn.clicked.connect(self.start_focus_session)
+        
+        focus_layout.addWidget(QLabel("Priority and Due Tasks:"))
+        focus_layout.addWidget(self.focus_task_list)
+        focus_layout.addWidget(self.start_focus_btn)
+        
+        dashboard_layout.addWidget(focus_group)
+        
+        # Kanban view
+        kanban_tab = QWidget()
+        kanban_layout = QHBoxLayout(kanban_tab)
+        
+        # To Do column
+        todo_group = QGroupBox("To Do")
+        todo_layout = QVBoxLayout(todo_group)
+        self.todo_list = QListWidget()
+        todo_layout.addWidget(self.todo_list)
+        
+        # In Progress column
+        progress_group = QGroupBox("In Progress")
+        progress_layout = QVBoxLayout(progress_group)
+        self.progress_list = QListWidget()
+        progress_layout.addWidget(self.progress_list)
+        
+        # Done column
+        done_group = QGroupBox("Done")
+        done_layout = QVBoxLayout(done_group)
+        self.done_list = QListWidget()
+        done_layout.addWidget(self.done_list)
+        
+        kanban_layout.addWidget(todo_group)
+        kanban_layout.addWidget(progress_group)
+        kanban_layout.addWidget(done_group)
+        
         # Add tabs
         self.tabs.addTab(tasks_tab, "Tasks")
         self.tabs.addTab(stats_tab, "Statistics")
+        self.tabs.addTab(projects_tab, "Projects")
+        self.tabs.addTab(dashboard_tab, "Dashboard")
+        self.tabs.addTab(kanban_tab, "Kanban")
         self.tabs.addTab(settings_tab, "Settings")
         
         main_layout.addWidget(self.tabs)
         
         # Carica i task e aggiorna le statistiche
         self.refresh_tasks()
-
-    # Aggiungi questo metodo alla classe TaskManagerWidget
-    def update_theme(self):
-        """Aggiorna il tema del widget in base al tema corrente dell'app"""
-        if not self.theme_manager:
+        self.load_projects()
+        self.update_dashboard()
+        self.update_kanban_view()
+        
+        # Setup timer for checking reminders
+        self.reminder_timer = QTimer(self)
+        self.reminder_timer.timeout.connect(self.check_reminders)
+        self.reminder_timer.start(60000)  # Check every minute
+    
+    # New methods for project management
+    def create_project(self):
+        """Create a new project"""
+        project_name, ok = QInputDialog.getText(self, "New Project", "Enter project name:")
+        
+        if ok and project_name:
+            if project_name in self.task_manager.projects:
+                QMessageBox.warning(self, "Error", "A project with this name already exists")
+                return
+            
+            self.task_manager.projects[project_name] = []
+            self.load_projects()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def load_projects(self):
+        """Load and display all projects"""
+        self.projects_list.clear()
+        
+        for project_name, tasks in self.task_manager.projects.items():
+            completed = sum(1 for task in tasks if task["completed"])
+            item_text = f"{project_name} ({completed}/{len(tasks)})"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.UserRole, project_name)
+            self.projects_list.addItem(item)
+    
+    def show_project_tasks(self, item):
+        """Display tasks for selected project"""
+        project_name = item.data(Qt.UserRole)
+        self.project_tasks_list.clear()
+        
+        for task in self.task_manager.projects[project_name]:
+            item = QListWidgetItem(task["task"])
+            if task["completed"]:
+                item.setForeground(QColor(100, 100, 100))
+                item.setText(f"✓ {task['task']}")
+            
+            # Colore basato sulla priorità
+            if "priority" in task:
+                if task["priority"] == "High":
+                    item.setForeground(QColor(200, 0, 0))
+                elif task["priority"] == "Medium":
+                    item.setForeground(QColor(200, 120, 0))
+            
+            item.setData(Qt.UserRole, task)  # Store task data
+            self.project_tasks_list.addItem(item)
+    
+    def add_task_to_project(self):
+        """Add a selected task to a project"""
+        selected_items = self.tasks_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Selection", "Please select a task to add to a project")
+            return
+        
+        if not self.task_manager.projects:
+            QMessageBox.warning(self, "No Projects", "Please create a project first")
+            return
+        
+        item = selected_items[0]
+        task_index = item.data(Qt.UserRole)
+        task = self.task_manager.tasks[task_index]
+        
+        # Ask user to select a project
+        project_names = list(self.task_manager.projects.keys())
+        project_name, ok = QInputDialog.getItem(
+            self, "Select Project", "Choose project:", project_names, 0, False
+        )
+        
+        if ok and project_name:
+            # Add task to project
+            self.task_manager.projects[project_name].append(task.copy())
+            self.load_projects()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def edit_project_task(self, item):
+        """Edit a task in a project"""
+        task = item.data(Qt.UserRole)
+        project_name = self.projects_list.currentItem().data(Qt.UserRole)
+        
+        dialog = TaskDetailsDialog(task, parent=self)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            task_data = dialog.get_task_data()
+            
+            # Find and update the task
+            for i, t in enumerate(self.task_manager.projects[project_name]):
+                if t is task:  # Use 'is' to check for same object
+                    self.task_manager.projects[project_name][i] = task_data
+                    break
+            
+            # Update the UI
+            self.show_project_tasks(self.projects_list.currentItem())
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    # Dashboard and productivity features
+    def update_dashboard(self):
+        """Update the dashboard with summary information"""
+        if not self.task_manager.tasks:
+            self.dashboard_summary.setText("No tasks available.")
             return
             
-        is_dark = self.theme_manager.is_dark_mode()
+        total = len(self.task_manager.tasks)
+        completed = sum(1 for task in self.task_manager.tasks if task["completed"])
+        completion_percentage = int((completed / total * 100) if total > 0 else 0)
         
-        # Colori di base
-        bg_color = "#1f1f1f" if is_dark else "#ffffff"
-        text_color = "#ffffff" if is_dark else "#000000"
-        border_color = "#3d3d3d" if is_dark else "#e0e0e0"
-        hover_color = "#3d3d3d" if is_dark else "#f0f0f0"
+        # Tasks due today
+        today = datetime.now().strftime("%Y-%m-%d")
+        due_today = [t for t in self.task_manager.tasks 
+                     if t.get("due_date") == today and not t["completed"]]
         
-        # Applica stili specifici per il widget
-        self.setStyleSheet(f"""
-            QWidget {{
-                background-color: {bg_color};
-                color: {text_color};
-            }}
+        # Tasks due soon (within next 7 days)
+        future_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        due_soon = [t for t in self.task_manager.tasks 
+                   if t.get("due_date") and today < t.get("due_date") <= future_date 
+                   and not t["completed"]]
+        
+        # Overdue tasks
+        overdue = [t for t in self.task_manager.tasks 
+                  if t.get("due_date") and t.get("due_date") < today 
+                  and not t["completed"]]
+        
+        # High priority tasks
+        high_priority = [t for t in self.task_manager.tasks 
+                        if t.get("priority") == "High" and not t["completed"]]
+        
+        # Build the summary text
+        summary = f"<h3>Task Dashboard</h3>"
+        summary += f"<p><b>Progress:</b> {completed}/{total} ({completion_percentage}% complete)</p>"
+        summary += f"<p><b>Tasks due today:</b> {len(due_today)}</p>"
+        summary += f"<p><b>Tasks due within 7 days:</b> {len(due_soon)}</p>"
+        summary += f"<p><b>Overdue tasks:</b> {len(overdue)}</p>"
+        summary += f"<p><b>High priority tasks:</b> {len(high_priority)}</p>"
+        
+        if due_today:
+            summary += "<h4>Due Today:</h4><ul>"
+            for task in due_today[:5]:  # Show top 5
+                summary += f"<li>{task['task']}</li>"
+            if len(due_today) > 5:
+                summary += f"<li>...and {len(due_today) - 5} more</li>"
+            summary += "</ul>"
+        
+        if high_priority:
+            summary += "<h4>High Priority Tasks:</h4><ul>"
+            for task in high_priority[:5]:  # Show top 5
+                summary += f"<li>{task['task']}</li>"
+            if len(high_priority) > 5:
+                summary += f"<li>...and {len(high_priority) - 5} more</li>"
+            summary += "</ul>"
+        
+        # Update the dashboard text
+        self.dashboard_summary.setHtml(summary)
+        
+        # Update focus task list
+        self.focus_task_list.clear()
+        focus_tasks = high_priority + [t for t in due_today if t not in high_priority]
+        
+        for task in focus_tasks:
+            item = QListWidgetItem(task["task"])
+            priority = "High" if task in high_priority else ""
+            due = f"Due today" if task in due_today else ""
+            item.setText(f"{task['task']} - {priority} {due}")
+            item.setData(Qt.UserRole, task)
+            self.focus_task_list.addItem(item)
+    
+    def update_kanban_view(self):
+        """Update the Kanban board view"""
+        self.todo_list.clear()
+        self.progress_list.clear()
+        self.done_list.clear()
+        
+        for task in self.task_manager.tasks:
+            item = QListWidgetItem(task["task"])
             
-            QTabWidget::pane {{
-                border: 1px solid {border_color};
-                border-radius: 4px;
-            }}
+            # Set item data
+            item.setData(Qt.UserRole, task)
             
-            QTabBar::tab {{
-                background-color: {bg_color};
-                color: {text_color};
-                padding: 8px 12px;
-                border: 1px solid {border_color};
-                border-bottom: none;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }}
+            # Color based on priority
+            if task.get("priority") == "High":
+                item.setForeground(QColor(200, 0, 0))
+            elif task.get("priority") == "Medium":
+                item.setForeground(QColor(200, 120, 0))
             
-            QTabBar::tab:selected {{
-                background-color: {"#2d2d2d" if is_dark else "#f8f8f8"};
-                border-bottom: none;
-            }}
+            if task["completed"]:
+                self.done_list.addItem(item)
+            elif task.get("status") == "in_progress":
+                self.progress_list.addItem(item)
+            else:
+                self.todo_list.addItem(item)
+    
+    def start_focus_session(self):
+        """Start a focus session on a selected task"""
+        selected_items = self.focus_task_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Selection", "Please select a task to focus on")
+            return
+        
+        task = selected_items[0].data(Qt.UserRole)
+        
+        # Create and show focus mode dialog
+        dialog = FocusSessionDialog(task, self)
+        if dialog.exec_() == QDialog.Accepted:
+            # Update task status after focus session
+            task["status"] = "in_progress"
             
-            QListWidget {{
-                background-color: {"#2d2d2d" if is_dark else "#ffffff"};
-                border: 1px solid {border_color};
-                border-radius: 4px;
-            }}
+            if dialog.completed:
+                task["completed"] = True
             
-            QListWidget::item:hover {{
-                background-color: {hover_color};
-            }}
+            # Update UI
+            self.refresh_tasks()
+            self.update_kanban_view()
+            self.update_dashboard()
             
-            QListWidget::item:selected {{
-                background-color: {"#0078d4" if is_dark else "#e5f3ff"};
-                color: {"#ffffff" if is_dark else "#000000"};
-            }}
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def check_reminders(self):
+        """Check for tasks that need reminders"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        reminder_tasks = [t for t in self.task_manager.tasks 
+                         if t.get("reminder") == today and not t["completed"]]
+        
+        if reminder_tasks:
+            reminder_text = "Reminders for today:\n\n"
+            for task in reminder_tasks:
+                reminder_text += f"• {task['task']}\n"
             
-            QPushButton {{
-                background-color: {"#2d2d2d" if is_dark else "#f0f0f0"};
-                border: 1px solid {border_color};
-                padding: 5px 10px;
-                border-radius: 4px;
-            }}
-            
-            QPushButton:hover {{
-                background-color: {"#3d3d3d" if is_dark else "#e0e0e0"};
-            }}
-            
-            QLineEdit, QTextEdit, QDateEdit, QComboBox {{
-                background-color: {"#2d2d2d" if is_dark else "#ffffff"};
-                border: 1px solid {border_color};
-                padding: 5px;
-                border-radius: 4px;
-            }}
-            
-            QGroupBox {{
-                border: 1px solid {border_color};
-                border-radius: 4px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }}
-            
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
-            }}
-        """)
-
+            QMessageBox.information(self, "Task Reminders", reminder_text)
+    
+    def create_backup(self):
+        """Create a backup of all tasks and projects"""
+        if self.task_manager.auto_backup():
+            QMessageBox.information(self, "Backup Created", 
+                                   "Task backup created successfully")
+        else:
+            QMessageBox.warning(self, "Backup Failed", 
+                               "Failed to create backup")
+    
+    def update_due_date_stats(self):
+        """Update statistics for due dates"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        
+        due_today = sum(1 for t in self.task_manager.tasks 
+                       if t.get("due_date") == today and not t["completed"])
+        
+        due_this_week = sum(1 for t in self.task_manager.tasks 
+                           if t.get("due_date") and today < t.get("due_date") <= week_end 
+                           and not t["completed"])
+        
+        overdue = sum(1 for t in self.task_manager.tasks 
+                     if t.get("due_date") and t.get("due_date") < today 
+                     and not t["completed"])
+        
+        self.due_today_label.setText(str(due_today))
+        self.due_this_week_label.setText(str(due_this_week))
+        self.overdue_label.setText(str(overdue))
+    
     def refresh_tasks(self):
         """Aggiorna la lista delle attività e le statistiche"""
         self.tasks_list.clear()
@@ -4736,69 +5298,57 @@ class TaskManagerWidget(QWidget):
                     item.setForeground(QColor(200, 120, 0))
             
             self.tasks_list.addItem(item)
-            
+        
+        # Update all statistical information
         self.update_statistics()
-    
-    def filter_tasks(self):
-        """Filtra le attività in base al testo di ricerca"""
-        self.refresh_tasks()  # Usa la stessa funzione con il testo di ricerca
-    
-    def update_statistics(self):
-        """Aggiorna tutte le statistiche"""
-        # Contatori base
-        total = len(self.task_manager.tasks)
-        completed = sum(1 for task in self.task_manager.tasks if task["completed"])
-        pending = total - completed
-        
-        self.total_label.setText(str(total))
-        self.completed_label.setText(str(completed))
-        self.pending_label.setText(str(pending))
-        
-        # Contatori di priorità
-        high = sum(1 for task in self.task_manager.tasks if task.get("priority") == "High")
-        medium = sum(1 for task in self.task_manager.tasks if task.get("priority") == "Medium")
-        low = sum(1 for task in self.task_manager.tasks if task.get("priority") == "Low")
-        
-        self.high_priority_label.setText(str(high))
-        self.medium_priority_label.setText(str(medium))
-        self.low_priority_label.setText(str(low))
-        
-        # Tags cloud
-        all_tags = []
-        for task in self.task_manager.tasks:
-            if "tags" in task and task["tags"]:
-                all_tags.extend(task["tags"])
-                
-        if all_tags:
-            from collections import Counter
-            tag_counter = Counter(all_tags)
-            common_tags = [f"{tag} ({count})" for tag, count in tag_counter.most_common(10)]
-            self.tags_label.setText(", ".join(common_tags))
-        else:
-            self.tags_label.setText("No tags yet")
-    
+        self.update_due_date_stats()
+        self.update_dashboard()
+        self.update_kanban_view()
+
     def add_task(self):
-        """Aggiungi una nuova attività"""
+        """Add a new task"""
         dialog = TaskDetailsDialog(parent=self)
+        
+        # Populate project combo box with existing projects
+        for project_name in self.task_manager.projects.keys():
+            dialog.project_combo.addItem(project_name)
+        
         if dialog.exec_() == QDialog.Accepted:
             task_data = dialog.get_task_data()
             self.task_manager.tasks.append(task_data)
+            
+            # If task is assigned to a project, add it there too
+            if task_data["project"]:
+                self.task_manager.add_task_to_project(task_data["project"], task_data)
+            
             self.refresh_tasks()
             
             if self.autosave_check.isChecked():
                 self.task_manager._save_tasks_to_default()
     
     def edit_task(self):
-        """Modifica un'attività esistente"""
+        """Edit the selected task"""
         selected_items = self.tasks_list.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "No Selection", "Please select a task to edit.")
+            QMessageBox.warning(self, "No Selection", "Please select a task to edit")
             return
             
         item = selected_items[0]
         task_index = item.data(Qt.UserRole)
+        task = self.task_manager.tasks[task_index]
         
-        dialog = TaskDetailsDialog(self.task_manager.tasks[task_index], parent=self)
+        dialog = TaskDetailsDialog(task, parent=self)
+        
+        # Populate project combo box
+        for project_name in self.task_manager.projects.keys():
+            dialog.project_combo.addItem(project_name)
+        
+        # Select current project if it exists
+        if "project" in task and task["project"]:
+            index = dialog.project_combo.findText(task["project"])
+            if index >= 0:
+                dialog.project_combo.setCurrentIndex(index)
+        
         if dialog.exec_() == QDialog.Accepted:
             self.task_manager.tasks[task_index] = dialog.get_task_data()
             self.refresh_tasks()
@@ -4807,19 +5357,21 @@ class TaskManagerWidget(QWidget):
                 self.task_manager._save_tasks_to_default()
     
     def remove_task(self):
-        """Rimuove un'attività"""
+        """Remove the selected task"""
         selected_items = self.tasks_list.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "No Selection", "Please select a task to remove.")
+            QMessageBox.warning(self, "No Selection", "Please select a task to remove")
             return
             
         item = selected_items[0]
         task_index = item.data(Qt.UserRole)
         
-        reply = QMessageBox.question(self, "Confirm Removal", 
-                                    "Are you sure you want to remove this task?",
-                                    QMessageBox.Yes | QMessageBox.No, 
-                                    QMessageBox.No)
+        reply = QMessageBox.question(
+            self, "Confirm Delete",
+            "Are you sure you want to delete this task?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
         if reply == QMessageBox.Yes:
             del self.task_manager.tasks[task_index]
             self.refresh_tasks()
@@ -4828,117 +5380,584 @@ class TaskManagerWidget(QWidget):
                 self.task_manager._save_tasks_to_default()
     
     def mark_completed(self):
-        """Marca un'attività come completata"""
+        """Mark the selected task as completed"""
         selected_items = self.tasks_list.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "No Selection", "Please select a task to mark as completed.")
+            QMessageBox.warning(self, "No Selection", "Please select a task to mark as completed")
             return
             
         item = selected_items[0]
         task_index = item.data(Qt.UserRole)
         
-        # Toggle completion state
-        current_state = self.task_manager.tasks[task_index].get("completed", False)
-        self.task_manager.tasks[task_index]["completed"] = not current_state
-        
+        self.task_manager.tasks[task_index]["completed"] = True
         self.refresh_tasks()
         
         if self.autosave_check.isChecked():
             self.task_manager._save_tasks_to_default()
     
-    def show_task_details(self):
-        """Mostra i dettagli di un'attività"""
-        selected_items = self.tasks_list.selectedItems()
-        if not selected_items:
-            return
-            
-        item = selected_items[0]
-        task_index = item.data(Qt.UserRole)
+    def filter_tasks(self):
+        """Filter tasks based on search text"""
+        self.refresh_tasks()
+    
+    def refresh_tasks(self):
+        """Refresh the task list and update statistics"""
+        self.tasks_list.clear()
         
-        dialog = TaskDetailsDialog(self.task_manager.tasks[task_index], parent=self)
+        show_completed = self.show_completed_check.isChecked()
+        show_pending = self.show_pending_check.isChecked()
+        search_text = self.search_input.text().lower()
+        
+        # Track statistics
+        total = 0
+        completed = 0
+        pending = 0
+        high_priority = 0
+        medium_priority = 0
+        low_priority = 0
+        
+        for i, task in enumerate(self.task_manager.tasks):
+            total += 1
+            
+            # Track statistics
+            if task["completed"]:
+                completed += 1
+            else:
+                pending += 1
+                
+            # Track priority statistics
+            if "priority" in task:
+                if task["priority"] == "High":
+                    high_priority += 1
+                elif task["priority"] == "Medium":
+                    medium_priority += 1
+                elif task["priority"] == "Low":
+                    low_priority += 1
+            
+            # Filter by completion status
+            if (task["completed"] and not show_completed) or (not task["completed"] and not show_pending):
+                continue
+                
+            # Filter by search text
+            if search_text and search_text not in task["task"].lower():
+                continue
+                
+            item = QListWidgetItem(task["task"])
+            item.setData(Qt.UserRole, i)  # Store task index
+            
+            # Style based on completion and priority
+            if task["completed"]:
+                item.setForeground(QColor(100, 100, 100))
+                item.setText(f"✓ {task['task']}")
+            
+            # Colore basato sulla priorità
+            if "priority" in task:
+                if task["priority"] == "High":
+                    item.setForeground(QColor(200, 0, 0))
+                elif task["priority"] == "Medium":
+                    item.setForeground(QColor(200, 120, 0))
+            
+            self.tasks_list.addItem(item)
+        
+        # Update statistics
+        self.total_label.setText(str(total))
+        self.completed_label.setText(str(completed))
+        self.pending_label.setText(str(pending))
+        self.high_priority_label.setText(str(high_priority))
+        self.medium_priority_label.setText(str(medium_priority))
+        self.low_priority_label.setText(str(low_priority))
+        
+        # Due dates statistics
+        self.update_due_date_stats()
+        
+        # Update tags statistics
+        all_tags = []
+        for task in self.task_manager.tasks:
+            if "tags" in task and task["tags"]:
+                all_tags.extend(task["tags"])
+        
+        if all_tags:
+            # Count occurrences of each tag
+            from collections import Counter
+            tag_counts = Counter(all_tags)
+            tag_text = ", ".join([f"{tag} ({count})" for tag, count in tag_counts.most_common(10)])
+            self.tags_label.setText(tag_text)
+        else:
+            self.tags_label.setText("No tags yet")
+    
+    def update_due_date_stats(self):
+        """Update statistics for due dates"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        week_end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        
+        due_today = sum(1 for t in self.task_manager.tasks 
+                       if t.get("due_date") == today and not t["completed"])
+        
+        due_this_week = sum(1 for t in self.task_manager.tasks 
+                           if t.get("due_date") and today < t.get("due_date") <= week_end 
+                           and not t["completed"])
+        
+        overdue = sum(1 for t in self.task_manager.tasks 
+                     if t.get("due_date") and t.get("due_date") < today 
+                     and not t["completed"])
+        
+        self.due_today_label.setText(str(due_today))
+        self.due_this_week_label.setText(str(due_this_week))
+        self.overdue_label.setText(str(overdue))
+    
+    def show_task_details(self, item):
+        """Show details of the selected task"""
+        task_index = item.data(Qt.UserRole)
+        task = self.task_manager.tasks[task_index]
+        
+        # Open task in focus session
+        dialog = FocusSessionDialog(task, parent=self)
         if dialog.exec_() == QDialog.Accepted:
-            self.task_manager.tasks[task_index] = dialog.get_task_data()
+            # If task was marked as completed in the session
+            if dialog.completed:
+                task["completed"] = True
+            
+            # Refresh display
             self.refresh_tasks()
             
             if self.autosave_check.isChecked():
                 self.task_manager._save_tasks_to_default()
     
-    def export_tasks(self):
-        """Esporta i task su file"""
-        from PyQt5.QtWidgets import QFileDialog
+    def create_project(self):
+        """Create a new project"""
+        project_name, ok = QInputDialog.getText(self, "New Project", "Enter project name:")
         
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Tasks", "", "JSON Files (*.json)")
+        if ok and project_name:
+            if project_name in self.task_manager.projects:
+                QMessageBox.warning(self, "Error", "A project with this name already exists")
+                return
+            
+            self.task_manager.projects[project_name] = []
+            self.load_projects()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def load_projects(self):
+        """Load and display all projects"""
+        self.projects_list.clear()
+        
+        for project_name, tasks in self.task_manager.projects.items():
+            completed = sum(1 for task in tasks if task["completed"])
+            item_text = f"{project_name} ({completed}/{len(tasks)})"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.UserRole, project_name)
+            self.projects_list.addItem(item)
+    
+    def show_project_tasks(self, item):
+        """Display tasks for selected project"""
+        project_name = item.data(Qt.UserRole)
+        self.project_tasks_list.clear()
+        
+        for task in self.task_manager.projects[project_name]:
+            item = QListWidgetItem(task["task"])
+            if task["completed"]:
+                item.setForeground(QColor(100, 100, 100))
+                item.setText(f"✓ {task['task']}")
+            
+            # Colore basato sulla priorità
+            if "priority" in task:
+                if task["priority"] == "High":
+                    item.setForeground(QColor(200, 0, 0))
+                elif task["priority"] == "Medium":
+                    item.setForeground(QColor(200, 120, 0))
+            
+            item.setData(Qt.UserRole, task)  # Store task data
+            self.project_tasks_list.addItem(item)
+    
+    def add_task_to_project(self):
+        """Add a selected task to a project"""
+        selected_items = self.tasks_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Selection", "Please select a task to add to a project")
+            return
+        
+        if not self.task_manager.projects:
+            QMessageBox.warning(self, "No Projects", "Please create a project first")
+            return
+        
+        item = selected_items[0]
+        task_index = item.data(Qt.UserRole)
+        task = self.task_manager.tasks[task_index]
+        
+        # Ask user to select a project
+        project_names = list(self.task_manager.projects.keys())
+        project_name, ok = QInputDialog.getItem(
+            self, "Select Project", "Choose project:", project_names, 0, False
+        )
+        
+        if ok and project_name:
+            # Add task to project
+            self.task_manager.projects[project_name].append(task.copy())
+            self.load_projects()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def edit_project_task(self, item):
+        """Edit a task in a project"""
+        task = item.data(Qt.UserRole)
+        project_name = self.projects_list.currentItem().data(Qt.UserRole)
+        
+        dialog = TaskDetailsDialog(task, parent=self)
+        
+        # Populate project combo box
+        for project_name in self.task_manager.projects.keys():
+            dialog.project_combo.addItem(project_name)
+        
+        # Select current project
+        index = dialog.project_combo.findText(project_name)
+        if index >= 0:
+            dialog.project_combo.setCurrentIndex(index)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            task_data = dialog.get_task_data()
+            
+            # Find and update the task
+            for i, t in enumerate(self.task_manager.projects[project_name]):
+                if t is task:  # Use 'is' to check for same object
+                    self.task_manager.projects[project_name][i] = task_data
+                    break
+            
+            # Update the UI
+            self.show_project_tasks(self.projects_list.currentItem())
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def start_focus_session(self):
+        """Start a focus session on a selected task"""
+        selected_items = self.focus_task_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "No Selection", "Please select a task to focus on")
+            return
+        
+        task = selected_items[0].data(Qt.UserRole)
+        
+        # Create and show focus mode dialog
+        dialog = FocusSessionDialog(task, self)
+        if dialog.exec_() == QDialog.Accepted:
+            # Update task status after focus session
+            task["status"] = "in_progress"
+            
+            if dialog.completed:
+                task["completed"] = True
+            
+            # Update UI
+            self.refresh_tasks()
+            self.update_kanban_view()
+            self.update_dashboard()
+            
+            if self.autosave_check.isChecked():
+                self.task_manager._save_tasks_to_default()
+    
+    def update_dashboard(self):
+        """Update the dashboard with summary information"""
+        if not self.task_manager.tasks:
+            self.dashboard_summary.setText("No tasks available.")
+            return
+            
+        total = len(self.task_manager.tasks)
+        completed = sum(1 for task in self.task_manager.tasks if task["completed"])
+        completion_percentage = int((completed / total * 100) if total > 0 else 0)
+        
+        # Tasks due today
+        today = datetime.now().strftime("%Y-%m-%d")
+        due_today = [t for t in self.task_manager.tasks 
+                     if t.get("due_date") == today and not t["completed"]]
+        
+        # Tasks due soon (within next 7 days)
+        future_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        due_soon = [t for t in self.task_manager.tasks 
+                   if t.get("due_date") and today < t.get("due_date") <= future_date 
+                   and not t["completed"]]
+        
+        # Overdue tasks
+        overdue = [t for t in self.task_manager.tasks 
+                  if t.get("due_date") and t.get("due_date") < today 
+                  and not t["completed"]]
+        
+        # High priority tasks
+        high_priority = [t for t in self.task_manager.tasks 
+                        if t.get("priority") == "High" and not t["completed"]]
+        
+        # Build the summary text
+        summary = f"<h3>Task Dashboard</h3>"
+        summary += f"<p><b>Progress:</b> {completed}/{total} ({completion_percentage}% complete)</p>"
+        summary += f"<p><b>Tasks due today:</b> {len(due_today)}</p>"
+        summary += f"<p><b>Tasks due within 7 days:</b> {len(due_soon)}</p>"
+        summary += f"<p><b>Overdue tasks:</b> {len(overdue)}</p>"
+        summary += f"<p><b>High priority tasks:</b> {len(high_priority)}</p>"
+        
+        if due_today:
+            summary += "<h4>Due Today:</h4><ul>"
+            for task in due_today[:5]:  # Show top 5
+                summary += f"<li>{task['task']}</li>"
+            if len(due_today) > 5:
+                summary += f"<li>...and {len(due_today) - 5} more</li>"
+            summary += "</ul>"
+        
+        if high_priority:
+            summary += "<h4>High Priority Tasks:</h4><ul>"
+            for task in high_priority[:5]:  # Show top 5
+                summary += f"<li>{task['task']}</li>"
+            if len(high_priority) > 5:
+                summary += f"<li>...and {len(high_priority) - 5} more</li>"
+            summary += "</ul>"
+        
+        # Update the dashboard text
+        self.dashboard_summary.setHtml(summary)
+        
+        # Update focus task list
+        self.focus_task_list.clear()
+        focus_tasks = high_priority + [t for t in due_today if t not in high_priority]
+        
+        for task in focus_tasks:
+            item = QListWidgetItem(task["task"])
+            priority = "High" if task in high_priority else ""
+            due = f"Due today" if task in due_today else ""
+            item.setText(f"{task['task']} - {priority} {due}")
+            item.setData(Qt.UserRole, task)
+            self.focus_task_list.addItem(item)
+    
+    def update_kanban_view(self):
+        """Update the Kanban board view"""
+        self.todo_list.clear()
+        self.progress_list.clear()
+        self.done_list.clear()
+        
+        for task in self.task_manager.tasks:
+            item = QListWidgetItem(task["task"])
+            
+            # Set item data
+            item.setData(Qt.UserRole, task)
+            
+            # Color based on priority
+            if task.get("priority") == "High":
+                item.setForeground(QColor(200, 0, 0))
+            elif task.get("priority") == "Medium":
+                item.setForeground(QColor(200, 120, 0))
+            
+            if task["completed"]:
+                self.done_list.addItem(item)
+            elif task.get("status") == "in_progress":
+                self.progress_list.addItem(item)
+            else:
+                self.todo_list.addItem(item)
+    
+    def check_reminders(self):
+        """Check for tasks that need reminders"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        reminder_tasks = [t for t in self.task_manager.tasks 
+                         if t.get("reminder") == today and not t["completed"]]
+        
+        if reminder_tasks:
+            reminder_text = "Reminders for today:\n\n"
+            for task in reminder_tasks:
+                reminder_text += f"• {task['task']}\n"
+            
+            QMessageBox.information(self, "Task Reminders", reminder_text)
+    
+    def create_backup(self):
+        """Create a backup of all tasks and projects"""
+        if self.task_manager.auto_backup():
+            QMessageBox.information(self, "Backup Created", 
+                                   "Task backup created successfully")
+        else:
+            QMessageBox.warning(self, "Backup Failed", 
+                               "Failed to create backup")
+    
+    def export_tasks(self):
+        """Export tasks to a custom file"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Tasks",
+            "",
+            "JSON Files (*.json);;All Files (*)"
+        )
+        
         if file_path:
             try:
-                with open(file_path, "w") as file:
-                    json.dump(self.task_manager.tasks, file)
-                QMessageBox.information(self, "Export Successful", f"Tasks exported to {file_path}")
+                data = {
+                    "tasks": self.task_manager.tasks,
+                    "projects": self.task_manager.projects
+                }
+                with open(file_path, "w") as f:
+                    json.dump(data, f)
+                QMessageBox.information(self, "Export Successful", 
+                                       f"Tasks exported to {file_path}")
             except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Error exporting tasks: {str(e)}")
+                QMessageBox.critical(self, "Export Failed", 
+                                    f"Failed to export tasks: {str(e)}")
     
     def import_tasks(self):
-        """Importa i task da file"""
-        from PyQt5.QtWidgets import QFileDialog
+        """Import tasks from a file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Tasks",
+            "",
+            "JSON Files (*.json);;All Files (*)"
+        )
         
-        file_path, _ = QFileDialog.getOpenFileName(self, "Import Tasks", "", "JSON Files (*.json)")
         if file_path:
             try:
-                with open(file_path, "r") as file:
-                    tasks = json.load(file)
+                with open(file_path, "r") as f:
+                    data = json.load(f)
                 
-                # Verifica il formato
-                if not isinstance(tasks, list):
-                    raise ValueError("Invalid task format")
-                    
-                # Aggiungi o sostituisci?
-                reply = QMessageBox.question(self, "Import Options", 
-                                          "Do you want to replace current tasks or append?",
-                                          QMessageBox.StandardButtons(
-                                              QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
-                                          ))
-                
-                if reply == QMessageBox.Cancel:
-                    return
-                elif reply == QMessageBox.Yes:  # Replace
-                    self.task_manager.tasks = tasks
-                else:  # Append
-                    self.task_manager.tasks.extend(tasks)
+                if isinstance(data, dict) and "tasks" in data and "projects" in data:
+                    self.task_manager.tasks = data["tasks"]
+                    self.task_manager.projects = data["projects"]
+                else:
+                    self.task_manager.tasks = data
                 
                 self.refresh_tasks()
-                
-                if self.autosave_check.isChecked():
-                    self.task_manager._save_tasks_to_default()
-                    
-                QMessageBox.information(self, "Import Successful", f"Tasks imported from {file_path}")
+                self.load_projects()
+                QMessageBox.information(self, "Import Successful", 
+                                       "Tasks imported successfully")
             except Exception as e:
-                QMessageBox.critical(self, "Import Error", f"Error importing tasks: {str(e)}")
+                QMessageBox.critical(self, "Import Failed", 
+                                    f"Failed to import tasks: {str(e)}")
     
     def clear_completed_tasks(self):
-        """Cancella tutte le attività completate"""
-        reply = QMessageBox.question(self, "Confirm Clearing", 
-                                  "Are you sure you want to clear all completed tasks?",
-                                  QMessageBox.Yes | QMessageBox.No, 
-                                  QMessageBox.No)
+        """Clear all completed tasks"""
+        reply = QMessageBox.question(
+            self,
+            "Confirm Clear",
+            "Are you sure you want to delete all completed tasks?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
         if reply == QMessageBox.Yes:
-            self.task_manager.tasks = [task for task in self.task_manager.tasks if not task.get("completed", False)]
+            self.task_manager.tasks = [t for t in self.task_manager.tasks if not t["completed"]]
+            
+            # Also remove completed tasks from projects
+            for project_name in self.task_manager.projects:
+                self.task_manager.projects[project_name] = [
+                    t for t in self.task_manager.projects[project_name] if not t["completed"]
+                ]
+            
             self.refresh_tasks()
+            self.load_projects()
             
             if self.autosave_check.isChecked():
                 self.task_manager._save_tasks_to_default()
     
     def clear_all_tasks(self):
-        """Cancella tutte le attività"""
-        reply = QMessageBox.question(self, "Confirm Clearing", 
-                                  "Are you sure you want to clear ALL tasks? This cannot be undone.",
-                                  QMessageBox.Yes | QMessageBox.No, 
-                                  QMessageBox.No)
+        """Clear all tasks"""
+        reply = QMessageBox.question(
+            self,
+            "Confirm Clear",
+            "Are you sure you want to delete ALL tasks? This cannot be undone!",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
         if reply == QMessageBox.Yes:
             self.task_manager.tasks = []
+            self.task_manager.projects = {}
+            
             self.refresh_tasks()
+            self.load_projects()
             
             if self.autosave_check.isChecked():
                 self.task_manager._save_tasks_to_default()
 
+    # Add this method to fix the error
+    def update_theme(self):
+        """Update the widget's theme based on the theme manager's current theme"""
+        if not self.theme_manager:
+            return
+            
+        # Apply theme to the task list
+        if hasattr(self, 'tasks_list'):
+            self.tasks_list.setStyleSheet("""
+                QListWidget {
+                    background-color: %s;
+                    border: 1px solid %s;
+                    border-radius: 4px;
+                }
+                QListWidget::item {
+                    height: 30px;
+                    padding: 5px;
+                }
+                QListWidget::item:selected {
+                    background-color: %s;
+                    color: %s;
+                }
+            """ % (
+                "#ffffff" if self.theme_manager.get_current_theme() == "light" else "#2d2d2d",
+                "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
+                "#e5f3ff" if self.theme_manager.get_current_theme() == "light" else "#0078d4",
+                "#000000" if self.theme_manager.get_current_theme() == "light" else "#ffffff"
+            ))
+        
+        # Apply theme to project list
+        if hasattr(self, 'projects_list'):
+            self.projects_list.setStyleSheet("""
+                QListWidget {
+                    background-color: %s;
+                    border: 1px solid %s;
+                    border-radius: 4px;
+                }
+            """ % (
+                "#ffffff" if self.theme_manager.get_current_theme() == "light" else "#2d2d2d",
+                "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d"
+            ))
+        
+        # Apply theme to buttons
+        button_style = """
+            QPushButton {
+                background-color: %s;
+                color: %s;
+                border: 1px solid %s;
+                border-radius: 3px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: %s;
+            }
+        """ % (
+            "#f8f8f8" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
+            "#000000" if self.theme_manager.get_current_theme() == "light" else "#ffffff",
+            "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#4d4d4d",
+            "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#4d4d4d"
+        )
+        
+        # Apply style to all buttons
+        for button in self.findChildren(QPushButton):
+            button.setStyleSheet(button_style)
+            
+        # Apply theme to tabs
+        if hasattr(self, 'tabs'):
+            tab_style = """
+                QTabWidget::pane {
+                    border: 1px solid %s;
+                    background-color: %s;
+                }
+                QTabBar::tab {
+                    background-color: %s;
+                    color: %s;
+                    padding: 8px 12px;
+                    border: 1px solid %s;
+                    border-bottom: none;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                }
+                QTabBar::tab:selected {
+                    background-color: %s;
+                }
+            """ % (
+                "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
+                "#ffffff" if self.theme_manager.get_current_theme() == "light" else "#2d2d2d",
+                "#f0f0f0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
+                "#000000" if self.theme_manager.get_current_theme() == "light" else "#ffffff",
+                "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
+                "#ffffff" if self.theme_manager.get_current_theme() == "light" else "#2d2d2d"
+            )
+            self.tabs.setStyleSheet(tab_style)
 
 class LoanApp(QMainWindow):
     def __init__(self, db_manager):
