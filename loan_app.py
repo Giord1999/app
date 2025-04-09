@@ -1,14 +1,14 @@
 #Imports for the GUI
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, 
-                             QLineEdit, QComboBox, QListWidget, QMessageBox, 
-                             QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, QInputDialog,
-                             QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout, 
+                             QLineEdit, QComboBox, QListWidget, QMessageBox,
+                             QTableWidget, QTableWidgetItem, QSplashScreen, QDialog, QPushButton, 
+                             QDoubleSpinBox, QSpinBox, QScrollArea, QFormLayout,  QInputDialog,
                              QTextEdit, QHBoxLayout, QToolButton, QSizePolicy, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QStatusBar, QAction, QTabWidget, QFrame, QStackedWidget, QGridLayout, QDateEdit, QCheckBox, QFileDialog, QGroupBox, QProgressDialog, QProgressBar)
+                             QToolButton, QListWidgetItem, QSizePolicy, QScrollArea, QStackedWidget, QAction, QTabWidget, QFrame, QGridLayout, QDateEdit, QCheckBox, QFileDialog, QGroupBox, QProgressDialog, QProgressBar)
 
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen, QColor
-from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate, QThread, pyqtSignal, pyqtSlot, QObject, QUrl
+from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate, QThread, pyqtSignal, pyqtSlot, QObject, QUrl, QRect
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
 from PyQt5.QtWebChannel import QWebChannel
 # Set the backend for matplotlib
@@ -21,12 +21,11 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 from matplotlib.figure import Figure
 
 #Imports for the backend
-import numba
+from datetime import datetime, timedelta
 import json
 import sys
 import os
 import time
-from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import psycopg2
@@ -35,9 +34,6 @@ from ai_chatbot_loan import Chatbot
 from loan_crm import LoanCRM
 from loan_report import LoanReport
 from loan_dashboard import DashboardBackend
-from task_manager_loan import TaskManager
-# Add to existing imports section
-
 
 def resource_path(relative_path):
     """Ottiene il percorso assoluto delle risorse, sia in modalità development che in eseguibile"""
@@ -89,36 +85,36 @@ class FluentStylesheet:
                 background-color: #ffffff;
             }
             
-             
             QPushButton {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                                stop:0 #3fa9f5, stop:1 #0078d4);
+                                    stop:0 #3fa9f5, stop:1 #0078d4);
                 color: white;
                 border: none;
                 border-radius: 20px;
                 padding: 12px 24px;
-
                 font-size: 11pt;
-                min-width: 60px;
+                min-width: 80px;
             }
-            
+
             QPushButton:hover {
                 background-color: #106ebe;
             }
-            
+
             QPushButton:pressed {
                 background-color: #005a9e;
+                padding-top: 14px;
+                padding-bottom: 10px;
             }
+
             
             QPushButton:disabled {
                 background-color: #cccccc;
-                
             }
-
+             
             QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
                 border: 1px solid #d0d0d0;
-                border-radius: 20px;
-                padding: 8px 20px;
+                border-radius: 18px;
+                padding: 12px 22px;
                 background-color: #ffffff;
             }
             
@@ -329,10 +325,6 @@ class ThemeManager:
     def get_current_theme(self):
         """Restituisce il nome del tema corrente"""
         return self.current_theme
-
-    def is_dark_mode(self):
-        """Verifica se il tema corrente è dark mode"""
-        return self.current_theme == "dark"
 
     def apply_theme_to_widget(self, widget, widget_type):
         """Applica stili specifici per tipo di widget"""
@@ -1895,8 +1887,8 @@ class SidebarWidget(QWidget):
         self.start_x = 0
         self.start_width = 0
         self.expanded_width = 250  # Larghezza quando espanso
-        self.min_width = 50       # Larghezza minima
-        self.max_width = 500      # Larghezza massima
+        self.min_width = 50        # Larghezza minima quando collassato
+        self.max_width = 500       # Larghezza massima
         self.init_ui()
 
     def init_ui(self):
@@ -1915,7 +1907,7 @@ class SidebarWidget(QWidget):
         self.toggle_button = QPushButton()
         self.toggle_button.setFixedSize(32, 32)
         self.toggle_button.clicked.connect(self.toggle_sidebar)
-        self.toggle_button.setCursor(Qt.PointingHandCursor)
+        self.toggle_button.setCursor(Qt.PointingHandCursor)  # Cambia il cursore per un feedback migliore
         
         # Stile per il menu hamburger
         self.toggle_button.setStyleSheet("""
@@ -1946,31 +1938,27 @@ class SidebarWidget(QWidget):
         
         # Crea il resize handle (maniglia di ridimensionamento)
         self.resize_handle = QFrame(self)
+        self.resize_handle.setObjectName("resizeHandle")
         self.resize_handle.setFrameShape(QFrame.VLine)
-        self.resize_handle.setFrameShadow(QFrame.Raised)  # Usa Raised invece di Sunken per maggiore visibilità
+        self.resize_handle.setFrameShadow(QFrame.Sunken)
         self.resize_handle.setCursor(Qt.SizeHorCursor)
         self.resize_handle.setFixedWidth(4)
         self.resize_handle.setStyleSheet("""
-            QFrame {
+            #resizeHandle {
                 background-color: transparent;
                 border: none;
             }
-            QFrame:hover {
-                background-color: rgba(0, 120, 212, 0.5);
+            #resizeHandle:hover {
+                background-color: rgba(0, 120, 212, 0.3);
             }
         """)
+        self.resize_handle.show()
+        self.resize_handle.raise_()
         
         # Stile iniziale
-        self.setMinimumWidth(self.min_width)
-        self.setMaximumWidth(self.max_width)
-        self.setFixedWidth(self.expanded_width)
-        
-        # Mostra il resize handle e configura gli attributi per il QSS
-        self.resize_handle.raise_()
-        self.resize_handle.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-        self.resize_handle.setMouseTracking(True)
-        
-        # Inizialmente posiziona il resize handle
+        self.setMinimumWidth(self.min_width)  # Larghezza minima quando collassato
+        self.setMaximumWidth(self.max_width)  # Imposta una larghezza massima ragionevole
+        self.setFixedWidth(self.expanded_width)  # Larghezza iniziale
         self.update_style()
     
     def update_hamburger_icon(self):
@@ -2015,7 +2003,7 @@ class SidebarWidget(QWidget):
         self.collapsed = not self.collapsed
         target_width = self.min_width if self.collapsed else self.expanded_width
         
-        # Aggiorna l'icona
+        # Aggiorna l'icona invece di cambiare il testo
         self.update_hamburger_icon()
         
         # Animazione di transizione
@@ -2026,10 +2014,13 @@ class SidebarWidget(QWidget):
         self.animation.start()
         
         # Imposta anche la larghezza massima durante l'animazione
-        self.setMaximumWidth(target_width)
+        self.setFixedWidth(target_width)
         
         # Nascondi/mostra il contenuto durante l'animazione
         self.content_widget.setVisible(not self.collapsed)
+        
+        # Aggiorna la posizione del resize handle
+        self.updateResizeHandlePosition()
     
     def update_style(self):
         """Aggiorna lo stile in base al tema corrente."""
@@ -2038,7 +2029,7 @@ class SidebarWidget(QWidget):
             if theme == "light":
                 self.setStyleSheet("""
                     QWidget {
-                        background-color: #f5f5f5;
+                        background-color: transparent;
                         border-right: 1px solid #e0e0e0;
                     }
                     QPushButton {
@@ -2048,17 +2039,6 @@ class SidebarWidget(QWidget):
                     }
                     QPushButton:hover {
                         background-color: #f0f0f0;
-                    }
-                """)
-                
-                # Stile specifico per il resize handle in tema chiaro
-                self.resize_handle.setStyleSheet("""
-                    QFrame {
-                        background-color: transparent;
-                        border: none;
-                    }
-                    QFrame:hover {
-                        background-color: rgba(0, 120, 212, 0.3);
                     }
                 """)
             else:
@@ -2077,30 +2057,24 @@ class SidebarWidget(QWidget):
                         background-color: #555555;
                     }
                 """)
-                
-                # Stile specifico per il resize handle in tema scuro
-                self.resize_handle.setStyleSheet("""
-                    QFrame {
-                        background-color: transparent;
-                        border: none;
-                    }
-                    QFrame:hover {
-                        background-color: rgba(30, 144, 255, 0.4);
-                    }
-                """)
             
             # Aggiorna anche l'icona perché potrebbe essere cambiato il tema
             self.update_hamburger_icon()
+    
+    def updateResizeHandlePosition(self):
+        """Aggiorna la posizione del handle di ridimensionamento"""
+        self.resize_handle.setGeometry(self.width() - 4, 0, 4, self.height())
     
     def resizeEvent(self, event):
         """Gestisce il ridimensionamento del widget."""
         super().resizeEvent(event)
         # Aggiorna la posizione del resize handle
-        self.resize_handle.setGeometry(self.width() - 4, 0, 4, self.height())
+        self.updateResizeHandlePosition()
     
     def mousePressEvent(self, event):
         """Gestisce l'evento di pressione del mouse."""
-        if self.resize_handle.geometry().contains(event.pos()):
+        handle_rect = QRect(self.width() - 4, 0, 4, self.height())
+        if handle_rect.contains(event.pos()):
             self.is_resizing = True
             self.start_x = event.globalX()
             self.start_width = self.width()
@@ -2116,45 +2090,15 @@ class SidebarWidget(QWidget):
             delta = event.globalX() - self.start_x
             new_width = max(self.min_width, min(self.start_width + delta, self.max_width))
             
-            # Rileva il collasso automatico se si trascina molto vicino alla larghezza minima
-            if new_width < self.min_width + 20 and not self.collapsed:
-                self.collapsed = True
-                self.content_widget.setVisible(False)
-                self.update_hamburger_icon()
-                new_width = self.min_width
-            # Rileva l'espansione automatica se si trascina oltre la larghezza minima
-            elif new_width >= self.min_width + 30 and self.collapsed:
-                self.collapsed = False
-                self.content_widget.setVisible(True)
-                self.update_hamburger_icon()
-            
-            # Se non è collassato, aggiorna la larghezza espansa
+            # Se non è collassato, aggiorna la larghezza quando espanso
             if not self.collapsed and new_width > self.min_width:
                 self.expanded_width = new_width
             
-            # Imposta la nuova larghezza con vincoli min/max
+            # Imposta la nuova larghezza
             self.setFixedWidth(new_width)
-            self.setMinimumWidth(self.min_width)
-            self.setMaximumWidth(self.max_width if not self.collapsed else self.min_width)
-            
-            # Assicurati che il resize handle rimanga nella posizione corretta
-            self.resize_handle.setGeometry(self.width() - 4, 0, 4, self.height())
-            
+            self.updateResizeHandlePosition()
             event.accept()
         else:
-            # Evidenzia il resize handle quando il mouse ci passa sopra
-            if abs(event.pos().x() - self.width()) < 5:
-                self.setCursor(Qt.SizeHorCursor)
-                self.resize_handle.setStyleSheet(self.resize_handle.styleSheet().replace(
-                    "background-color: transparent", 
-                    "background-color: rgba(0, 120, 212, 0.3)"
-                ))
-            else:
-                self.setCursor(Qt.ArrowCursor)
-                self.resize_handle.setStyleSheet(self.resize_handle.styleSheet().replace(
-                    "background-color: rgba(0, 120, 212, 0.3)", 
-                    "background-color: transparent"
-                ))
             super().mouseMoveEvent(event)
     
     def mouseReleaseEvent(self, event):
@@ -2163,39 +2107,23 @@ class SidebarWidget(QWidget):
             self.is_resizing = False
             self.setCursor(Qt.ArrowCursor)
             
-            # Termina il ridimensionamento con una larghezza logica
-            current_width = self.width()
+            # Se la larghezza è molto piccola, considera collassato
+            if self.width() < 60:
+                self.collapsed = True
+                self.setFixedWidth(self.min_width)
+                self.content_widget.setVisible(False)
+                self.update_hamburger_icon()
+            # Se è stato espanso da collassato, aggiorna lo stato
+            elif self.collapsed and self.width() > self.min_width:
+                self.collapsed = False
+                self.content_widget.setVisible(True)
+                self.update_hamburger_icon()
             
-            # Aggiungi snap per larghezza espansa predefinita
-            if abs(current_width - 250) < 20:  # Snap alla larghezza predefinita
-                self.setFixedWidth(250)
-                self.expanded_width = 250
-                
+            self.updateResizeHandlePosition()
             event.accept()
         else:
             super().mouseReleaseEvent(event)
-    
-    def enterEvent(self, event):
-        """Gestisce l'evento di ingresso del mouse nel widget."""
-        # Migliora visibilità del resize handle quando il mouse entra nel widget
-        if not self.collapsed:
-            self.resize_handle.setStyleSheet(self.resize_handle.styleSheet().replace(
-                "background-color: transparent", 
-                "background-color: rgba(0, 120, 212, 0.1)"
-            ))
-        super().enterEvent(event)
-    
-    def leaveEvent(self, event):
-        """Gestisce l'evento di uscita del mouse dal widget."""
-        # Ripristina la trasparenza del resize handle quando il mouse esce
-        if not self.is_resizing:
-            self.resize_handle.setStyleSheet(self.resize_handle.styleSheet().replace(
-                "background-color: rgba(0, 120, 212, 0.1)", 
-                "background-color: transparent"
-            ))
-            self.setCursor(Qt.ArrowCursor)
-        super().leaveEvent(event)
-        
+
 class CRMWidget(QWidget):
     """Widget principale per la gestione del CRM."""
     def __init__(self, crm_manager, parent=None, theme_manager=None):
@@ -3595,6 +3523,8 @@ class AssignLoanDialog(FluentDialog):
                 f"Failed to assign loan: {str(e)}"
             )
 
+
+
 class DashboardDialog(FluentDialog):
     """Interactive dashboard dialog with real-time data visualization."""
     
@@ -4335,8 +4265,6 @@ class DashboardDialog(FluentDialog):
         self.dashboard_backend.stop_auto_refresh()
         self.dashboard_backend.unregister_update_callback(self.update_dashboard)
         super().closeEvent(event)
-
-
 class FocusSessionDialog(QDialog):
     def __init__(self, task, parent=None):
         super().__init__(parent)
@@ -4350,9 +4278,99 @@ class FocusSessionDialog(QDialog):
         self.setMinimumWidth(400)
         self.setup_ui()
         
+        # Get the theme manager from the main application
+        main_window = self.get_main_window(parent)
+        if main_window and hasattr(main_window, 'theme_manager'):
+            self.theme_manager = main_window.theme_manager
+            self.apply_theme()
+        
+        self.setup_ui()
+        
         # Start session automatically
         self.start_session()
     
+    def get_main_window(self, widget):
+        """Find the main window in the widget hierarchy"""
+        if widget is None:
+            return None
+        if isinstance(widget, LoanApp):
+            return widget
+        return self.get_main_window(widget.parent())
+    
+    def apply_theme(self):
+        """Apply theme styling to dialog"""
+        if not hasattr(self, 'theme_manager'):
+            return
+            
+        theme = self.theme_manager.get_current_theme()
+        
+        if theme == "light":
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #ffffff;
+                    color: #000000;
+                }
+                QLabel {
+                    color: #000000;
+                }
+                QPushButton {
+                    background-color: #f8f8f8;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    color: #000000;
+                }
+                QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+                QTextEdit {
+                    background-color: #ffffff;
+                    border: 1px solid #e0e0e0;
+                    color: #000000;
+                }
+                QProgressBar {
+                    border: 1px solid #e0e0e0;
+                    border-radius: 4px;
+                    text-align: center;
+                }
+                QProgressBar::chunk {
+                    background-color: #0078D4;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #1f1f1f;
+                    color: #ffffff;
+                }
+                QLabel {
+                    color: #ffffff;
+                }
+                QPushButton {
+                    background-color: #3d3d3d;
+                    border: 1px solid #4d4d4d;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    color: #ffffff;
+                }
+                QPushButton:hover {
+                    background-color: #4d4d4d;
+                }
+                QTextEdit {
+                    background-color: #2d2d2d;
+                    border: 1px solid #3d3d3d;
+                    color: #ffffff;
+                }
+                QProgressBar {
+                    border: 1px solid #3d3d3d;
+                    border-radius: 4px;
+                    text-align: center;
+                }
+                QProgressBar::chunk {
+                    background-color: #0078D4;
+                }
+            """)
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
         
@@ -4450,6 +4468,7 @@ class FocusSessionDialog(QDialog):
         self.timer.stop()
         super().closeEvent(event)
 
+
 class TaskManager:
     def __init__(self):
         self.tasks = []
@@ -4528,8 +4547,112 @@ class TaskDetailsDialog(QDialog):
         self.setWindowTitle("Task Details")
         self.task = task or {}
         self.setMinimumWidth(400)
+        # Get the theme manager from the main application
+        main_window = self.get_main_window(parent)
+        if main_window and hasattr(main_window, 'theme_manager'):
+            self.theme_manager = main_window.theme_manager
+            self.apply_theme()
         self.setup_ui()
+
+    def get_main_window(self, widget):
+        """Find the main window in the widget hierarchy"""
+        if widget is None:
+            return None
+        if isinstance(widget, LoanApp):
+            return widget
+        return self.get_main_window(widget.parent())
+    
+    def apply_theme(self):
+        """Apply theme styling to dialog"""
+        if not hasattr(self, 'theme_manager'):
+            return
+            
+        theme = self.theme_manager.get_current_theme()
         
+        if theme == "light":
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #ffffff;
+                    color: #000000;
+                }
+                QLabel {
+                    color: #000000;
+                }
+                QLineEdit, QDateEdit, QComboBox, QSpinBox {
+                    background-color: #ffffff;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 4px;
+                    padding: 4px;
+                    color: #000000;
+                }
+                QTextEdit {
+                    background-color: #ffffff;
+                    border: 1px solid #e0e0e0;
+                    color: #000000;
+                }
+                QPushButton {
+                    background-color: #f8f8f8;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    color: #000000;
+                }
+                QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+                QGroupBox {
+                    border: 1px solid #e0e0e0;
+                    border-radius: 4px;
+                    margin-top: 1ex;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    padding: 0 3px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #1f1f1f;
+                    color: #ffffff;
+                }
+                QLabel {
+                    color: #ffffff;
+                }
+                QLineEdit, QDateEdit, QComboBox, QSpinBox {
+                    background-color: #2d2d2d;
+                    border: 1px solid #3d3d3d;
+                    border-radius: 4px;
+                    padding: 4px;
+                    color: #ffffff;
+                }
+                QTextEdit {
+                    background-color: #2d2d2d;
+                    border: 1px solid #3d3d3d;
+                    color: #ffffff;
+                }
+                QPushButton {
+                    background-color: #3d3d3d;
+                    border: 1px solid #4d4d4d;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    color: #ffffff;
+                }
+                QPushButton:hover {
+                    background-color: #4d4d4d;
+                }
+                QGroupBox {
+                    border: 1px solid #3d3d3d;
+                    border-radius: 4px;
+                    margin-top: 1ex;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    padding: 0 3px;
+                    color: #ffffff;
+                }
+            """)
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
         
@@ -4717,6 +4840,26 @@ class TaskManagerWidget(QWidget):
         super().__init__(parent)
         self.theme_manager = theme_manager
         self.task_manager = TaskManager()
+        # Get screen dimensions to set appropriate constraints
+        from PyQt5.QtWidgets import QApplication
+        screen = QApplication.primaryScreen().availableGeometry()
+        screen_height = screen.height()
+        screen_width = screen.width()
+        
+        # Set responsive size policy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Set reasonable minimum dimensions
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(400)
+        
+        # Cap maximum dimensions as percentage of screen size
+        self.setMaximumHeight(int(screen_height * 0.8))  # 80% of screen height
+        self.setMaximumWidth(int(screen_width * 0.9))   # 90% of screen width
+        
+        # Set a sensible default size
+        self.resize(min(800, int(screen_width * 0.7)), 
+                min(600, int(screen_height * 0.7)))
         self.init_ui()
         
     def init_ui(self):
@@ -5959,6 +6102,7 @@ class TaskManagerWidget(QWidget):
             )
             self.tabs.setStyleSheet(tab_style)
 
+
 class LoanApp(QMainWindow):
     def __init__(self, db_manager):
         super().__init__()
@@ -5977,8 +6121,7 @@ class LoanApp(QMainWindow):
         self.db_manager.create_db()
 
         self.crm_manager = LoanCRM(self.db_manager)
-
-        # Crea il widget TaskManager
+        # Create the TaskManager widget
         self.task_manager_widget = TaskManagerWidget(parent=self, theme_manager=self.theme_manager)
 
         if not self.db_manager.check_connection():
@@ -6019,19 +6162,21 @@ class LoanApp(QMainWindow):
         dashboard_button = QPushButton("Dashboard")
         dashboard_button.setIcon(QIcon(resource_path("dashboard.png")))
         dashboard_button.clicked.connect(self.open_dashboard)
-        self.sidebar.add_widget(dashboard_button) 
+        self.sidebar.add_widget(dashboard_button)
 
-        # Aggiungi un bottone per aprire il TaskManager nella sidebar
+        # Add a button for TaskManager to the sidebar
         task_button = QPushButton("Tasks")
-        task_button.setIcon(QIcon(resource_path("tasks.png")))  # Assicurati di avere questa icona
-        task_button.clicked.connect(self.toggle_task_manager)
-        self.sidebar.add_widget(task_button)
-        self.task_manager_widget.hide()
-        self.sidebar.add_widget(self.task_manager_widget)
+        task_button.setIcon(QIcon(resource_path("tasks.png")))  # Make sure this icon exists
+        task_button.clicked.connect(self.toggle_task_manager_widget)
 
+        self.sidebar.add_widget(task_button)
         # Inizialmente nascondi il widget CRM
         self.crm_widget.hide()
         self.sidebar.add_widget(self.crm_widget)
+
+        # Initially hide the widget
+        self.task_manager_widget.hide()
+        self.sidebar.add_widget(self.task_manager_widget)
     
         # Create UI components in the correct order
         self.create_menu_bar()
@@ -6206,10 +6351,7 @@ class LoanApp(QMainWindow):
         if hasattr(self, 'crm_widget'):
             self.crm_widget.update_style()
 
-        # Applica stili al TaskManagerWidget
-        if hasattr(self, 'task_manager_widget'):
-            self.task_manager_widget.update_theme()
-            
+
     def load_existing_loans(self):
         """Carica i prestiti dal database e li mostra nella UI."""
         self.loans = []  # Puliamo la lista dei prestiti
@@ -6337,10 +6479,6 @@ class LoanApp(QMainWindow):
         if hasattr(self, 'crm_widget'):
             self.crm_widget.update_style()
 
-        # Aggiorna anche lo stile del TaskManagerWidget
-        if hasattr(self, 'task_manager_widget'):
-            self.task_manager_widget.update_theme()
-
         # Mostra feedback all'utente
         theme_name = self.theme_manager.get_current_theme().capitalize()
         QMessageBox.information(self, "Theme Changed", f"Switched to {theme_name} theme")
@@ -6362,7 +6500,7 @@ class LoanApp(QMainWindow):
                     amortization_type=loan_data["amortization_type"],
                     frequency=loan_data["frequency"],
                     downpayment_percent=loan_data["downpayment_percent"],
-                    additional_costs=loan_data.get("additional_costs", {}),
+                    additional_costs=loan_data["additional_costs"],
                     periodic_expenses=loan_data.get("periodic_expenses", {}),
                     should_save=True  # Enable auto-save for new loans
                 )
@@ -6524,11 +6662,11 @@ class LoanApp(QMainWindow):
         dialog = ProbabilisticPricingDialog(self.selected_loan, self)
         dialog.exec_()
 
+
     def open_dashboard(self):
         """Open the loan dashboard dialog."""
         dashboard = DashboardDialog(self.db_manager, self)
         dashboard.exec_()
-
 
     def open_ai_assistant(self):
         """Opens the AI assistant dialog"""
@@ -6721,7 +6859,7 @@ class LoanApp(QMainWindow):
             raise
         # Initialize chatbot
 
-        self.chatbot = Chatbot(resource_path("intents.json"), db_manager=self.db_manager)
+        self.chatbot = Chatbot("intents.json")
         
     def display_loans(self):
         """Returns a formatted string of all loans for the chatbot"""
@@ -6739,14 +6877,12 @@ class LoanApp(QMainWindow):
             )
         return "\n".join(loans_info)
 
-    def toggle_task_manager(self):
-        """Toggle visibility of TaskManager widget"""
+    def toggle_task_manager_widget(self):
+        """Toggle visibility of Task Manager widget"""
         if self.task_manager_widget.isVisible():
             self.task_manager_widget.hide()
         else:
-            # Nascondi altri widget se visibili
-            if hasattr(self, 'crm_widget') and self.crm_widget.isVisible():
-                self.crm_widget.hide()
+            self.task_manager_widget.update_theme()  # Update theme before showing
             self.task_manager_widget.show()
 
 class ConsolidateLoansDialog(FluentDialog):
@@ -7258,6 +7394,7 @@ class LoanSelectionDialog(FluentDialog):
         return [item.data(Qt.UserRole) for item in selected_items]
 
 
+
 class  ChatAssistantDialog(QDialog):
 
     def __init__(self, loan_app, parent=None):
@@ -7267,10 +7404,9 @@ class  ChatAssistantDialog(QDialog):
         self.db_manager = loan_app.db_manager
         # Aggiungi l'icona della finestra
         self.setWindowIcon(QIcon(resource_path('loan_icon.ico')))
-        # Use direct path to intents.json in the same directory as the script
+        # Costruiamo il percorso assoluto al file degli intent
         intents_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'intents.json')
-        self.chatbot = Chatbot(intents_file, db_manager=self.db_manager)
-
+        self.chatbot = Chatbot("intents.json", db_manager=self.db_manager)
         # Sostituisci la conferma operatore con una versione GUI
         self.chatbot.operator_confirmation = lambda prompt: self.gui_operator_confirmation(prompt)
         self.main_layout = QVBoxLayout(self)
