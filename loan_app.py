@@ -9,8 +9,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QL
 
 from PyQt5.QtGui import QIcon, QPixmap, QFontDatabase, QFont, QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QSize, QTimer, QPropertyAnimation, QDate, QThread, pyqtSignal, pyqtSlot, QObject, QUrl, QRect
-from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
-from PyQt5.QtWebChannel import QWebChannel
+from PyQt5.QtWebEngineWidgets import QWebEngineView
 # Set the backend for matplotlib
 import matplotlib
 matplotlib.use('Qt5Agg')
@@ -231,7 +230,7 @@ class ThemeManager:
             "dark": {
                 "base": """
                     QWidget {
-                        font-size: 12pt;
+                        font-size: 10pt;
                         background-color: #1f1f1f;
                         color: #ffffff;
                     }
@@ -304,7 +303,7 @@ class ThemeManager:
                     
                     QListWidget::item:selected {
                         background-color: #0078d4;
-                        color: #ffffff;
+                        color: #000000;
                     }
                 """
             }
@@ -2267,11 +2266,108 @@ class CRMWidget(QWidget):
             self.load_corporations()
             
     def update_style(self):
-        """Aggiorna lo stile in base al tema corrente."""
-        if self.theme_manager:
-            # Lo stile sarà applicato automaticamente dall'app principale
-            pass
-    
+        """Apply consistent Fluent Design styling to match the main application"""
+        if not self.theme_manager:
+            return
+            
+        theme = self.theme_manager.get_current_theme()
+        is_light = theme == "light"
+        
+        # Base styling
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {is_light and '#ffffff' or '#1f1f1f'};
+                color: {is_light and '#000000' or '#ffffff'};
+                font-size: 11.5pt;
+            }}
+            
+            QTabWidget::pane {{
+                border: 1px solid {is_light and '#e0e0e0' or '#3d3d3d'};
+                border-radius: 4px;
+            }}
+            
+            QTabBar::tab {{
+                background-color: {is_light and '#f0f0f0' or '#2d2d2d'};
+                color: {is_light and '#000000' or '#ffffff'};
+                border: 1px solid {is_light and '#e0e0e0' or '#3d3d3d'};
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                padding: 6px 12px;
+                margin-right: 2px;
+            }}
+            
+            QTabBar::tab:selected {{
+                background-color: {is_light and '#ffffff' or '#3d3d3d'};
+                border-bottom: none;
+            }}
+            
+            QPushButton {{
+                background-color: {is_light and '#f8f8f8' or '#2d2d2d'};
+                color: {is_light and '#000000' or '#ffffff'};
+                border: 1px solid {is_light and '#e0e0e0' or '#3d3d3d'};
+                border-radius: 20px;
+                padding: 8px 16px;
+                min-height: 16px;
+            }}
+            
+            QPushButton:hover {{
+                background-color: {is_light and '#e9e9e9' or '#3d3d3d'};
+                border-color: {is_light and '#d0d0d0' or '#4d4d4d'};
+            }}
+            
+            QPushButton:pressed {{
+                background-color: {is_light and '#d0d0d0' or '#4d4d4d'};
+            }}
+            
+            QListWidget {{
+                background-color: {is_light and '#ffffff' or '#2d2d2d'};
+                border: 1px solid {is_light and '#e0e0e0' or '#3d3d3d'};
+                border-radius: 4px;
+            }}
+            
+            QListWidget::item {{
+                height: 30px;
+                padding: 5px;
+                border-bottom: 1px solid {is_light and '#f0f0f0' or '#3d3d3d'};
+            }}
+            
+            QListWidget::item:selected {{
+                background-color: {is_light and '#e5f3ff' or '#0078d4'};
+                color: {is_light and '#000000' or '#ffffff'};
+            }}
+            
+            QLabel {{
+                color: {is_light and '#212529' or '#f0f0f0'};
+            }}
+            
+            QLineEdit, QTextEdit, QComboBox {{
+                border: 1px solid {is_light and '#d0d0d0' or '#3d3d3d'};
+                border-radius: 18px;
+                padding: 8px 12px;
+                background-color: {is_light and '#ffffff' or '#2d2d2d'};
+                color: {is_light and '#000000' or '#ffffff'};
+            }}
+            
+            QLineEdit:focus, QTextEdit:focus, QComboBox:focus {{
+                border: 2px solid #0078d4;
+            }}
+        """)
+        
+        # Apply styles to child widgets that might need special handling
+        for btn in self.findChildren(QPushButton):
+            if "delete" in btn.objectName().lower():
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {is_light and '#f8d7da' or '#521b1f'};
+                        color: {is_light and '#721c24' or '#f8d7da'};
+                        border-color: {is_light and '#f5c6cb' or '#721c24'};
+                    }}
+                    QPushButton:hover {{
+                        background-color: {is_light and '#f5c6cb' or '#6c2128'};
+                    }}
+                """)
+
     def toggle_client_buttons(self, enabled):
         """Attiva/disattiva i bottoni che richiedono un client selezionato."""
         self.view_details_btn.setEnabled(enabled)
@@ -3524,7 +3620,6 @@ class AssignLoanDialog(FluentDialog):
             )
 
 
-
 class DashboardDialog(FluentDialog):
     """Interactive dashboard dialog with real-time data visualization."""
     
@@ -4265,6 +4360,8 @@ class DashboardDialog(FluentDialog):
         self.dashboard_backend.stop_auto_refresh()
         self.dashboard_backend.unregister_update_callback(self.update_dashboard)
         super().closeEvent(event)
+
+
 class FocusSessionDialog(QDialog):
     def __init__(self, task, parent=None):
         super().__init__(parent)
@@ -4298,78 +4395,20 @@ class FocusSessionDialog(QDialog):
         return self.get_main_window(widget.parent())
     
     def apply_theme(self):
-        """Apply theme styling to dialog"""
-        if not hasattr(self, 'theme_manager'):
+        """Applica il tema corrente al dialog"""
+        if not self.theme_manager:
             return
             
-        theme = self.theme_manager.get_current_theme()
-        
-        if theme == "light":
-            self.setStyleSheet("""
-                QDialog {
+        theme_name = self.theme_manager.get_current_theme()
+        if theme_name == "light":
+            # Applica lo stile del tema chiaro
+            base_style = """
+                QDialog, QWidget {
                     background-color: #ffffff;
                     color: #000000;
                 }
-                QLabel {
-                    color: #000000;
-                }
-                QPushButton {
-                    background-color: #f8f8f8;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px;
-                    padding: 6px 12px;
-                    color: #000000;
-                }
-                QPushButton:hover {
-                    background-color: #e0e0e0;
-                }
-                QTextEdit {
-                    background-color: #ffffff;
-                    border: 1px solid #e0e0e0;
-                    color: #000000;
-                }
-                QProgressBar {
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px;
-                    text-align: center;
-                }
-                QProgressBar::chunk {
-                    background-color: #0078D4;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QDialog {
-                    background-color: #1f1f1f;
-                    color: #ffffff;
-                }
-                QLabel {
-                    color: #ffffff;
-                }
-                QPushButton {
-                    background-color: #3d3d3d;
-                    border: 1px solid #4d4d4d;
-                    border-radius: 4px;
-                    padding: 6px 12px;
-                    color: #ffffff;
-                }
-                QPushButton:hover {
-                    background-color: #4d4d4d;
-                }
-                QTextEdit {
-                    background-color: #2d2d2d;
-                    border: 1px solid #3d3d3d;
-                    color: #ffffff;
-                }
-                QProgressBar {
-                    border: 1px solid #3d3d3d;
-                    border-radius: 4px;
-                    text-align: center;
-                }
-                QProgressBar::chunk {
-                    background-color: #0078D4;
-                }
-            """)
+            """
+            self.setStyleSheet(base_style)
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -4562,96 +4601,23 @@ class TaskDetailsDialog(QDialog):
             return widget
         return self.get_main_window(widget.parent())
     
+    
     def apply_theme(self):
-        """Apply theme styling to dialog"""
-        if not hasattr(self, 'theme_manager'):
+        """Applica il tema corrente al dialog"""
+        if not self.theme_manager:
             return
             
-        theme = self.theme_manager.get_current_theme()
-        
-        if theme == "light":
-            self.setStyleSheet("""
-                QDialog {
+        theme_name = self.theme_manager.get_current_theme()
+        if theme_name == "light":
+            # Applica lo stile del tema chiaro
+            base_style = """
+                QDialog, QWidget {
                     background-color: #ffffff;
                     color: #000000;
                 }
-                QLabel {
-                    color: #000000;
-                }
-                QLineEdit, QDateEdit, QComboBox, QSpinBox {
-                    background-color: #ffffff;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px;
-                    padding: 4px;
-                    color: #000000;
-                }
-                QTextEdit {
-                    background-color: #ffffff;
-                    border: 1px solid #e0e0e0;
-                    color: #000000;
-                }
-                QPushButton {
-                    background-color: #f8f8f8;
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px;
-                    padding: 6px 12px;
-                    color: #000000;
-                }
-                QPushButton:hover {
-                    background-color: #e0e0e0;
-                }
-                QGroupBox {
-                    border: 1px solid #e0e0e0;
-                    border-radius: 4px;
-                    margin-top: 1ex;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    padding: 0 3px;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QDialog {
-                    background-color: #1f1f1f;
-                    color: #ffffff;
-                }
-                QLabel {
-                    color: #ffffff;
-                }
-                QLineEdit, QDateEdit, QComboBox, QSpinBox {
-                    background-color: #2d2d2d;
-                    border: 1px solid #3d3d3d;
-                    border-radius: 4px;
-                    padding: 4px;
-                    color: #ffffff;
-                }
-                QTextEdit {
-                    background-color: #2d2d2d;
-                    border: 1px solid #3d3d3d;
-                    color: #ffffff;
-                }
-                QPushButton {
-                    background-color: #3d3d3d;
-                    border: 1px solid #4d4d4d;
-                    border-radius: 4px;
-                    padding: 6px 12px;
-                    color: #ffffff;
-                }
-                QPushButton:hover {
-                    background-color: #4d4d4d;
-                }
-                QGroupBox {
-                    border: 1px solid #3d3d3d;
-                    border-radius: 4px;
-                    margin-top: 1ex;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    padding: 0 3px;
-                    color: #ffffff;
-                }
-            """)
+            """
+            self.setStyleSheet(base_style)
+
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -6008,100 +5974,122 @@ class TaskManagerWidget(QWidget):
             if self.autosave_check.isChecked():
                 self.task_manager._save_tasks_to_default()
 
-    # Add this method to fix the error
     def update_theme(self):
         """Update the widget's theme based on the theme manager's current theme"""
         if not self.theme_manager:
             return
             
-        # Apply theme to the task list
-        if hasattr(self, 'tasks_list'):
-            self.tasks_list.setStyleSheet("""
-                QListWidget {
-                    background-color: %s;
-                    border: 1px solid %s;
-                    border-radius: 4px;
-                }
-                QListWidget::item {
-                    height: 30px;
-                    padding: 5px;
-                }
-                QListWidget::item:selected {
-                    background-color: %s;
-                    color: %s;
-                }
-            """ % (
-                "#ffffff" if self.theme_manager.get_current_theme() == "light" else "#2d2d2d",
-                "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
-                "#e5f3ff" if self.theme_manager.get_current_theme() == "light" else "#0078d4",
-                "#000000" if self.theme_manager.get_current_theme() == "light" else "#ffffff"
-            ))
+        is_light = self.theme_manager.get_current_theme() == "light"
         
-        # Apply theme to project list
-        if hasattr(self, 'projects_list'):
-            self.projects_list.setStyleSheet("""
-                QListWidget {
-                    background-color: %s;
-                    border: 1px solid %s;
-                    border-radius: 4px;
-                }
-            """ % (
-                "#ffffff" if self.theme_manager.get_current_theme() == "light" else "#2d2d2d",
-                "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d"
-            ))
-        
-        # Apply theme to buttons
-        button_style = """
-            QPushButton {
-                background-color: %s;
-                color: %s;
-                border: 1px solid %s;
-                border-radius: 3px;
-                padding: 4px 8px;
-            }
-            QPushButton:hover {
-                background-color: %s;
-            }
-        """ % (
-            "#f8f8f8" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
-            "#000000" if self.theme_manager.get_current_theme() == "light" else "#ffffff",
-            "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#4d4d4d",
-            "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#4d4d4d"
-        )
-        
-        # Apply style to all buttons
-        for button in self.findChildren(QPushButton):
-            button.setStyleSheet(button_style)
+        # Apply comprehensive styling matching the main app design
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {is_light and '#ffffff' or '#1f1f1f'};
+                color: {is_light and '#000000' or '#ffffff'};
+                font-size: 11.5pt;
+            }}
             
-        # Apply theme to tabs
-        if hasattr(self, 'tabs'):
-            tab_style = """
-                QTabWidget::pane {
-                    border: 1px solid %s;
-                    background-color: %s;
-                }
-                QTabBar::tab {
-                    background-color: %s;
-                    color: %s;
-                    padding: 8px 12px;
-                    border: 1px solid %s;
-                    border-bottom: none;
-                    border-top-left-radius: 4px;
-                    border-top-right-radius: 4px;
-                }
-                QTabBar::tab:selected {
-                    background-color: %s;
-                }
-            """ % (
-                "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
-                "#ffffff" if self.theme_manager.get_current_theme() == "light" else "#2d2d2d",
-                "#f0f0f0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
-                "#000000" if self.theme_manager.get_current_theme() == "light" else "#ffffff",
-                "#e0e0e0" if self.theme_manager.get_current_theme() == "light" else "#3d3d3d",
-                "#ffffff" if self.theme_manager.get_current_theme() == "light" else "#2d2d2d"
-            )
-            self.tabs.setStyleSheet(tab_style)
-
+            QListWidget, QTableWidget {{
+                background-color: {is_light and '#ffffff' or '#2d2d2d'};
+                border: 1px solid {is_light and '#e0e0e0' or '#3d3d3d'};
+                border-radius: 4px;
+            }}
+            
+            QListWidget::item, QTableWidget::item {{
+                height: 30px;
+                padding: 5px;
+                border-bottom: 1px solid {is_light and '#f0f0f0' or '#3d3d3d'};
+            }}
+            
+            QListWidget::item:selected, QTableWidget::item:selected {{
+                background-color: {is_light and '#e5f3ff' or '#0078d4'};
+                color: {is_light and '#000000' or '#ffffff'};
+            }}
+            
+            QTabWidget::pane {{
+                border: 1px solid {is_light and '#e0e0e0' or '#3d3d3d'};
+                background-color: {is_light and '#ffffff' or '#2d2d2d'};
+                border-radius: 4px;
+            }}
+            
+            QTabBar::tab {{
+                background-color: {is_light and '#f0f0f0' or '#3d3d3d'};
+                color: {is_light and '#000000' or '#ffffff'};
+                padding: 8px 12px;
+                border: 1px solid {is_light and '#e0e0e0' or '#3d3d3d'};
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }}
+            
+            QTabBar::tab:selected {{
+                background-color: {is_light and '#ffffff' or '#2d2d2d'};
+            }}
+            
+            QPushButton {{
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                        stop:0 {is_light and '#3fa9f5' or '#2a7cb5'}, 
+                                        stop:1 {is_light and '#0078d4' or '#005a9e'});
+                color: white;
+                border: none;
+                border-radius: 20px;
+                padding: 8px 16px;
+                font-size: 11pt;
+            }}
+            
+            QPushButton:hover {{
+                background-color: {is_light and '#106ebe' or '#004578'};
+            }}
+            
+            QPushButton:pressed {{
+                background-color: {is_light and '#005a9e' or '#003a66'};
+            }}
+            
+            QLineEdit, QTextEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox {{
+                border: 1px solid {is_light and '#d0d0d0' or '#3d3d3d'};
+                border-radius: 18px;
+                padding: 8px 12px;
+                background-color: {is_light and '#ffffff' or '#2d2d2d'};
+                color: {is_light and '#000000' or '#ffffff'};
+            }}
+            
+            QLineEdit:focus, QTextEdit:focus, QComboBox:focus, 
+            QDateEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+                border: 2px solid #0078d4;
+            }}
+            
+            QGroupBox {{
+                border: 1px solid {is_light and '#e0e0e0' or '#3d3d3d'};
+                border-radius: 4px;
+                margin-top: 14px;
+                padding-top: 12px;
+            }}
+            
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+                color: {is_light and '#0078d4' or '#3fa9f5'};
+                font-weight: bold;
+            }}
+            
+            QCheckBox {{
+                spacing: 8px;
+            }}
+            
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border: 1px solid {is_light and '#d0d0d0' or '#3d3d3d'};
+                border-radius: 4px;
+                background-color: {is_light and '#ffffff' or '#2d2d2d'};
+            }}
+            
+            QCheckBox::indicator:checked {{
+                background-color: #0078d4;
+                border-color: #0078d4;
+            }}
+        """)
 
 class LoanApp(QMainWindow):
     def __init__(self, db_manager):
@@ -6317,10 +6305,12 @@ class LoanApp(QMainWindow):
         if self.crm_widget.isVisible():
             self.crm_widget.hide()
         else:
-            # Aggiorna la lista dei clienti prima di mostrare
+            # Update styling before showing
+            self.crm_widget.update_style()
+            # Update client list
             self.crm_widget.load_clients()
             self.crm_widget.show()
-
+            
     def apply_initial_theme(self):
         """Applica gli stili del tema iniziale a tutti i componenti"""
         # Applica stili di base
@@ -6476,8 +6466,12 @@ class LoanApp(QMainWindow):
         if hasattr(self, 'sidebar'):
             self.sidebar.update_style()
             
+        # Update specific widget styles
         if hasattr(self, 'crm_widget'):
             self.crm_widget.update_style()
+            
+        if hasattr(self, 'task_manager_widget'):
+            self.task_manager_widget.update_theme()
 
         # Mostra feedback all'utente
         theme_name = self.theme_manager.get_current_theme().capitalize()
@@ -6882,7 +6876,8 @@ class LoanApp(QMainWindow):
         if self.task_manager_widget.isVisible():
             self.task_manager_widget.hide()
         else:
-            self.task_manager_widget.update_theme()  # Update theme before showing
+            # Update styling before showing
+            self.task_manager_widget.update_theme()
             self.task_manager_widget.show()
 
 class ConsolidateLoansDialog(FluentDialog):
